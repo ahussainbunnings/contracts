@@ -1,0 +1,25 @@
+{
+  "name": "dashboard",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start:sit":  "dotenv -e .env.sit  -- node ./src/index.js",
+    "start:uat":  "dotenv -e .env.uat  -- node ./src/index.js",
+    "start:prod": "dotenv -e .env.prod -- node ./src/index.js",
+    "debug:sit":  "dotenv -e .env.sit  -- node ./src/contractdetails.js",
+    "debug:uat":  "dotenv -e .env.uat  -- node ./src/contractdetails.js",
+    "debug:prod": "dotenv -e .env.prod -- node ./src/contractdetails.js"
+  },
+  "dependencies": {
+    "@azure/cosmos": "^4.5.1",
+    "@azure/keyvault-secrets": "^4.7.0",
+    "@azure/identity": "^4.0.1",
+    "dotenv": "^16.4.5",
+    "luxon": "^3.4.4"
+  },
+  "devDependencies": {
+    "cross-env": "^7.0.3",
+    "dotenv-cli": "^7.4.1"
+  }
+}
