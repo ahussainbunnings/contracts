@@ -13,7 +13,7 @@ const toWin = (startMel, endMel) => {
 export function todayWindow() {
     const nowMel = DateTime.now().setZone(MEL_TZ);
     const start  = nowMel.startOf("day");
-    const end    = nowMel; // <- till now
+    const end    = nowMel.endOf("day"); // <- till end of day
     return toWin(start, end);
 }
 

@@ -17,8 +17,8 @@ if (!['today', 'all'].includes(config.mode)) {
     process.exit(1);
 }
 
-if (!['today', 'overall', 'week', 'month'].includes(config.timeWindow)) {
-    console.error("❌ Invalid time window. Use 'today', 'overall', 'week', or 'month'");
+if (!['today', 'overall'].includes(config.timeWindow)) {
+    console.error("❌ Invalid time window. Use 'today' or 'overall'");
     process.exit(1);
 }
 
@@ -32,32 +32,35 @@ console.log(`📅 Time Window: ${config.timeWindow.toUpperCase()}`);
 console.log(`🕐 Current Melbourne Time: ${DateTime.now().setZone('Australia/Melbourne').toFormat('dd/MM/yyyy, HH:mm:ss')} Australia/Melbourne`);
 console.log(`${'='.repeat(80)}`);
 
-// Load query files based on time window
-async function loadQueryFiles(timeWindow) {
+// Load query files based on mode and time window
+async function loadQueryFiles(mode, timeWindow) {
     const queryFiles = [];
     
     try {
+        // Determine the folder to load from based on mode
+        const folder = mode === 'all' ? 'overall' : timeWindow;
+        
         // Load received queries
-        const receivedModule = await import(`./queries/${timeWindow}/todayreceived.js`);
+        const receivedModule = await import(`./queries/${folder}/${folder}received.js`);
         if (receivedModule.queries) {
             queryFiles.push(...receivedModule.queries);
         }
         
         // Load processed queries
-        const processedModule = await import(`./queries/${timeWindow}/todayprocessed.js`);
+        const processedModule = await import(`./queries/${folder}/${folder}processed.js`);
         if (processedModule.queries) {
             queryFiles.push(...processedModule.queries);
         }
         
         // Load failed queries
-        const failedModule = await import(`./queries/${timeWindow}/todayfailed.js`);
+        const failedModule = await import(`./queries/${folder}/${folder}failed.js`);
         if (failedModule.queries) {
             queryFiles.push(...failedModule.queries);
         }
         
         return queryFiles;
     } catch (error) {
-        console.error(`❌ Error loading query files:`, error.message);
+        console.error(`❌ Error loading query files for ${mode}/${timeWindow}:`, error.message);
         return [];
     }
 }
@@ -65,38 +68,25 @@ async function loadQueryFiles(timeWindow) {
 async function main() {
     let windowToUse;
     
-    // Determine time window
-    if (config.timeWindow === 'today') {
-        windowToUse = todayWindow();
-        console.log(`📅 Using TODAY window (Melbourne timezone)`);
-    } else {
+    // Determine time window based on mode
+    if (config.mode === 'all') {
         windowToUse = allTimeWindow();
         console.log(`📅 Using ALL-TIME window (no time filter)`);
+    } else {
+        windowToUse = todayWindow();
+        console.log(`📅 Using TODAY window (Melbourne timezone)`);
     }
     
     // Print detailed time window information
     logWindow(config.timeWindow.toUpperCase(), windowToUse);
     
     // Get Cosmos DB connection using Key Vault
-    console.log("🔗 [COSMOS] Initializing Cosmos DB connection...");
     const { containers } = await getCosmos();
-    console.log(`🔗 Cosmos: db=${process.env.COSMOS_DATABASE}, statusContainer=${process.env.CONTRACT_CONTAINER}, entitiesContainer=${process.env.CONTRACT_ENTITIES_CONTAINER}`);
     
-    // Load queries based on mode
+    // Load queries based on mode and time window
     let queries = [];
-    if (config.mode === 'all') {
-        console.log(`🔍 Loading ALL query modules...`);
-        const todayReceived = await import('./queries/today/todayreceived.js');
-        const todayProcessed = await import('./queries/today/todayprocessed.js');
-        const todayFailed = await import('./queries/today/todayfailed.js');
-        queries = [...todayReceived.queries, ...todayProcessed.queries, ...todayFailed.queries];
-    } else if (config.mode === 'today') {
-        console.log(`🔍 Loading TODAY query modules only...`);
-        const todayReceived = await import('./queries/today/todayreceived.js');
-        const todayProcessed = await import('./queries/today/todayprocessed.js');
-        const todayFailed = await import('./queries/today/todayfailed.js');
-        queries = [...todayReceived.queries, ...todayProcessed.queries, ...todayFailed.queries];
-    }
+    console.log(`🔍 Loading ${config.mode.toUpperCase()} query modules...`);
+    queries = await loadQueryFiles(config.mode, config.timeWindow);
     
     console.log(`📊 LOADED ${queries.length} QUERY MODULES:`);
     queries.forEach((q, i) => console.log(`   ${i + 1}. ${q.name}`));
@@ -118,30 +108,23 @@ async function main() {
             
             if (result && result.length > 0) {
                 console.log(`✅ ${mod.name}: ${result.length} series`);
-
+                
                 // Send to Dynatrace
                 const timestamp = Date.now();
                 const envLower = (process.env.ENVIRONMENT || 'UNKNOWN').toLowerCase();
                 
-                // Handle different metric types
-                let cumulativePayloadLines = [];
+                let cumulativePayloadLines = result.map(r => {
+                    let labels = Object.keys(r.labels)
+                        .filter(key => r.labels[key] !== undefined) // Filter out undefined labels
+                        .map(key => `${key}=${r.labels[key]}`)
+                        .join(',');
+                    
+                    // Add environment label
+                    labels += `,env=${envLower}`;
+                    
+                    return `${mod.metricBase},${labels} gauge,${r.value} ${timestamp}`;
+                });
                 
-                if (mod.name === 'contractfailed_today') {
-                    // Special handling for failed contract metrics
-                    cumulativePayloadLines = result
-                        .filter(r => r.labels.attempts === undefined)
-                        .map(r => 
-                            `${mod.metricBase},entity_type=${r.labels.entity_type},error_code=${r.labels.error_code},error_message=${r.labels.error_message},country=${r.labels.country},window=${r.labels.window},env=${envLower} gauge,${r.value} ${timestamp}`
-                        );
-                } else {
-                    // Standard handling for other metrics
-                    cumulativePayloadLines = result
-                        .filter(r => r.labels.attempts === undefined)
-                        .map(r => 
-                            `${mod.metricBase},status=${r.labels.status},contractstatus=${r.labels.contractstatus},country=${r.labels.country},window=${r.labels.window},env=${envLower} gauge,${r.value} ${timestamp}`
-                        );
-                }
-
                 console.log(`\n📤 DYNATRACE METRICS PAYLOAD (${mod.name}):`);
                 console.log(`📊 Metric Base: ${mod.metricBase}`);
                 console.log(`📈 Total Lines: ${cumulativePayloadLines.length}`);
@@ -162,7 +145,7 @@ async function main() {
             console.error(`📋 Stack trace:`, error.stack);
         }
     }
-
+    
     console.log(`\n${'='.repeat(80)}`);
     console.log(`🎉 QUERIES COMPLETED SUCCESSFULLY`);
     console.log(`📊 Total metrics sent: ${totalMetricsSent}`);

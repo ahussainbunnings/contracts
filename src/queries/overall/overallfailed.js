@@ -2,15 +2,14 @@ import { generateCumulativeMetricsFromData } from "../../utils/metricsGenerator.
 
 export const queries = [
     {
-        name: "contractfailed_today",
+        name: "contractfailed_overall",
         output: "metricsSeries",
-        metricBase: "custom.dashboard.contractfailed.today",
+        metricBase: "custom.dashboard.contractfailed.overall",
         run: async (containers, win) => {
-            console.log(`🔍 [CONTRACTFAILED-TODAY] Querying failed contract processing records...`);
-            console.log(`🔍 [CONTRACTFAILED-TODAY] Time window: ${win.startSec} to ${win.endSec}`);
+            console.log(`🔍 [CONTRACTFAILED-OVERALL] Querying failed contract processing records...`);
+            console.log(`🔍 [CONTRACTFAILED-OVERALL] Time window: ${win.startSec} to ${win.endSec}`);
             
             try {
-                // Query contract table for failed processing records within the time window
                 const query = {
                     query: `
                         SELECT c.id, c.contractBatchId, c.contractId, c.largeEntityType, 
@@ -25,21 +24,19 @@ export const queries = [
                     `,
                     parameters: [
                         { name: "@startSec", value: win.startSec },
-                        { name: "@endSec", value: win.endSec }
-                    ]
+                        { name: "@endSec", value: win.endSec },
+                    ],
                 };
 
-                console.log(`🔍 [CONTRACTFAILED-TODAY] Query parameters: @startSec=${win.startSec}, @endSec=${win.endSec}`);
+                console.log(`🔍 [CONTRACTFAILED-OVERALL] Query parameters: @startSec=${query.parameters[0].value}, @endSec=${query.parameters[1].value}`);
 
-                const result = await containers.contract.items.query(query).fetchAll();
-                
-                console.log(`✅ [CONTRACTFAILED-TODAY] Found ${result.resources.length} failed processing records`);
+                const { resources: failedRecordsRaw } = await containers.contract.items.query(query).fetchAll();
+                console.log(`✅ [CONTRACTFAILED-OVERALL] Found ${failedRecordsRaw.length} failed processing records`);
 
-                if (result.resources.length === 0) {
-                    console.log(`📊 [CONTRACTFAILED-TODAY] No failed records found for today, returning zero metrics`);
-                    // Return zero metrics for both failure types and both error patterns
+                if (failedRecordsRaw.length === 0) {
+                    console.log(`📊 [CONTRACTFAILED-OVERALL] No failed records found for overall period, returning zero metrics for all patterns`);
                     return [
-                        // Account_doesnot_exists pattern - failed
+                        // Zero metrics for Account_doesnot_exists - failed
                         {
                             value: 0,
                             labels: {
@@ -48,10 +45,10 @@ export const queries = [
                                 error_message: 'Account_doesnot_exists',
                                 failure_type: 'failed',
                                 country: 'total',
-                                window: 'today'
+                                window: 'overall'
                             }
                         },
-                        // Account_doesnot_exists pattern - permanently_failed
+                        // Zero metrics for Account_doesnot_exists - permanently_failed
                         {
                             value: 0,
                             labels: {
@@ -60,10 +57,10 @@ export const queries = [
                                 error_message: 'Account_doesnot_exists',
                                 failure_type: 'permanently_failed',
                                 country: 'total',
-                                window: 'today'
+                                window: 'overall'
                             }
                         },
-                        // Other errors pattern - failed
+                        // Zero metrics for other errors - failed
                         {
                             value: 0,
                             labels: {
@@ -72,25 +69,24 @@ export const queries = [
                                 error_message: 'other',
                                 failure_type: 'failed',
                                 country: 'total',
-                                window: 'today'
+                                window: 'overall'
                             }
                         },
-                        // Other errors pattern - permanently_failed
+                        // Zero metrics for other errors - permanently_failed
                         {
                             value: 0,
                             labels: {
                                 entity_type: 'ContractCustomer',
-                                error_code: 'INVALID_FIELD',
-                                error_message: 'Account_doesnot_exists',
+                                error_code: 'other',
+                                error_message: 'other',
                                 failure_type: 'permanently_failed',
                                 country: 'total',
-                                window: 'today'
+                                window: 'overall'
                             }
                         }
                     ];
                 }
 
-                const failedRecordsRaw = result.resources;
                 const failedRecordsGrouped = new Map(); // Key: entityType|errorCode|errorMessage|failureType
 
                 failedRecordsRaw.forEach(record => {
@@ -142,10 +138,10 @@ export const queries = [
                 });
 
                 const metrics = [];
-                const windowLabel = win.label || "today";
+                const windowLabel = win.label || "overall";
 
                 failedRecordsGrouped.forEach((data) => {
-                    console.log(`📈 [CONTRACTFAILED-TODAY] ${data.entityType} | ${data.errorCode} | ${data.errorMessage} | Failure Type: ${data.failureType} | Count: ${data.count} | Unique Contracts: ${data.uniqueContracts.size}`);
+                    console.log(`📈 [CONTRACTFAILED-OVERALL] ${data.entityType} | ${data.errorCode} | ${data.errorMessage} | Failure Type: ${data.failureType} | Count: ${data.count} | Unique Contracts: ${data.uniqueContracts.size}`);
                     metrics.push({
                         value: data.count,
                         labels: {
@@ -153,17 +149,17 @@ export const queries = [
                             error_code: data.errorCode,
                             error_message: data.errorMessage,
                             failure_type: data.failureType,
-                            country: 'total', // Assuming total for today
+                            country: 'total',
                             window: windowLabel
                         }
                     });
                 });
 
-                console.log(`✅ [CONTRACTFAILED-TODAY] Generated ${metrics.length} failure metrics`);
+                console.log(`✅ [CONTRACTFAILED-OVERALL] Generated ${metrics.length} failure metrics`);
                 return metrics;
 
             } catch (error) {
-                console.error(`❌ [CONTRACTFAILED-TODAY] Error:`, error.message);
+                console.error(`❌ [CONTRACTFAILED-OVERALL] Error:`, error.message);
                 console.error(`📋 Stack trace:`, error.stack);
                 // Return zero metrics for all patterns even on error
                 return [
@@ -175,7 +171,7 @@ export const queries = [
                             error_message: 'Account_doesnot_exists',
                             failure_type: 'failed',
                             country: 'total',
-                            window: 'today'
+                            window: 'overall'
                         }
                     },
                     {
@@ -186,7 +182,7 @@ export const queries = [
                             error_message: 'Account_doesnot_exists',
                             failure_type: 'permanently_failed',
                             country: 'total',
-                            window: 'today'
+                            window: 'overall'
                         }
                     },
                     {
@@ -197,7 +193,7 @@ export const queries = [
                             error_message: 'other',
                             failure_type: 'failed',
                             country: 'total',
-                            window: 'today'
+                            window: 'overall'
                         }
                     },
                     {
@@ -208,7 +204,7 @@ export const queries = [
                             error_message: 'other',
                             failure_type: 'permanently_failed',
                             country: 'total',
-                            window: 'today'
+                            window: 'overall'
                         }
                     }
                 ];
