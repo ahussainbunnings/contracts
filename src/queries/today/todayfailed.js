@@ -80,8 +80,8 @@ export const queries = [
                             value: 0,
                             labels: {
                                 entity_type: 'ContractCustomer',
-                                error_code: 'INVALID_FIELD',
-                                error_message: 'Account_doesnot_exists',
+                                error_code: 'other',
+                                error_message: 'other',
                                 failure_type: 'permanently_failed',
                                 country: 'total',
                                 window: 'today'
