@@ -2,6 +2,9 @@
 import { getCosmos } from "./connections/cosmos.js";
 import { sendMetrics } from "./connections/dynatrace.js";
 import { todayWindow, allTimeWindow, logWindow } from "./utils/windows.js";
+import { displayQueryResults } from "./utils/metricsDisplay.js";
+import { displayDashboardSummary, createQuerySummary } from "./utils/dashboardSummary.js";
+import { displaySuperCleanSummary } from "./utils/superCleanDisplay.js";
 import { DateTime } from "luxon";
 
 // Parse command line arguments
@@ -22,15 +25,15 @@ if (!['today', 'overall'].includes(config.timeWindow)) {
     process.exit(1);
 }
 
-console.log(`${'='.repeat(80)}`);
+// Summary displayed above
 console.log(`🚀 DASHBOARD STARTING - RESTRUCTURED QUERY SYSTEM`);
-console.log(`${'='.repeat(80)}`);
+// Summary displayed above
 console.log(`🏷️ Environment: ${process.env.ENVIRONMENT || 'UNKNOWN'}`);
 console.log(`🔧 Service: dashboard`);
 console.log(`📋 Mode: ${config.mode.toUpperCase()}`);
 console.log(`📅 Time Window: ${config.timeWindow.toUpperCase()}`);
 console.log(`🕐 Current Melbourne Time: ${DateTime.now().setZone('Australia/Melbourne').toFormat('dd/MM/yyyy, HH:mm:ss')} Australia/Melbourne`);
-console.log(`${'='.repeat(80)}`);
+// Summary displayed above
 
 // Load query files based on mode and time window
 async function loadQueryFiles(mode, timeWindow) {
@@ -90,16 +93,17 @@ async function main() {
     
     console.log(`📊 LOADED ${queries.length} QUERY MODULES:`);
     queries.forEach((q, i) => console.log(`   ${i + 1}. ${q.name}`));
-    console.log(`${'='.repeat(80)}`);
+    // Summary displayed above
     
     let totalMetricsSent = 0;
+    const queryResults = [];
     
     // Execute each query
     for (const mod of queries) {
         try {
-            console.log(`\n${'='.repeat(80)}`);
+            displaySuperCleanSummary(queryResults, totalMetricsSent, windowToUse);
             console.log(`🔍 PROCESSING: ${mod.name.toUpperCase()}`);
-            console.log(`${'='.repeat(80)}`);
+            // Summary displayed above
             
             // Print detailed time window information
             logWindow(config.timeWindow.toUpperCase(), windowToUse);
@@ -125,9 +129,10 @@ async function main() {
                     return `${mod.metricBase},${labels} gauge,${r.value} ${timestamp}`;
                 });
                 
-                console.log(`\n📤 DYNATRACE METRICS PAYLOAD (${mod.name}):`);
-                console.log(`📊 Metric Base: ${mod.metricBase}`);
-                console.log(`📈 Total Lines: ${cumulativePayloadLines.length}`);
+                // Clean display: show only essential info
+                console.log(`✅ ${mod.name}: ${result.length} metrics sent to Dynatrace`);
+                // Display handled by displayQueryResults
+                // Display handled by displayQueryResults
                 
                 const sendResult = await sendMetrics(cumulativePayloadLines);
                 console.log(`✅ Successfully sent ${sendResult.linesOk} metrics to Dynatrace`);
@@ -136,6 +141,8 @@ async function main() {
                 }
                 
                 totalMetricsSent += sendResult.linesOk;
+                // Store result for summary
+                queryResults.push(createQuerySummary(mod.name, result));
                 
             } else {
                 console.log(`❌ ${mod.name}: No data found`);
@@ -146,10 +153,10 @@ async function main() {
         }
     }
     
-    console.log(`\n${'='.repeat(80)}`);
-    console.log(`🎉 QUERIES COMPLETED SUCCESSFULLY`);
-    console.log(`📊 Total metrics sent: ${totalMetricsSent}`);
-    console.log(`${'='.repeat(80)}`);
+    displaySuperCleanSummary(queryResults, totalMetricsSent, windowToUse);
+    // Summary displayed above
+    // Summary displayed above
+    // Summary displayed above
 }
 
 // Run the dashboard

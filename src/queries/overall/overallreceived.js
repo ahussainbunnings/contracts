@@ -56,8 +56,8 @@ export const queries = [
                     query: `
                         SELECT e.partitionKey,
                                e.header.metadata.contractId,
-                               e.header.metadata.contractStatus,
-                               e.header.metadata.countryCode,
+                               e.header.metadata.contractStatus AS contractStatus,
+                               e.header.metadata.countryCode AS countryCode,
                                e.header.subDomain
                         FROM e
                         WHERE e.partitionKey IN (${chunk.map((_, idx) => `@batchId${idx}`).join(', ')})
@@ -111,14 +111,14 @@ export const queries = [
                     
                     // Create keys for different combinations
                     const keys = [
-                        `successfully_received,${contractStatus},${countryCode}`,
-                        `successfully_received,${contractStatus},total`,
-                        `successfully_received,all,${countryCode}`,
-                        `successfully_received,all,total`,
-                        `successfully_received_unique,${contractStatus},${countryCode}`,
-                        `successfully_received_unique,${contractStatus},total`,
-                        `successfully_received_unique,all,${countryCode}`,
-                        `successfully_received_unique,all,total`
+                        `successfully_received|${countryCode}|${contractStatus}|0`,
+                        `successfully_received|total|${contractStatus}|0`,
+                        `successfully_received|${countryCode}|all|0`,
+                        `successfully_received|total|all|0`,
+                        `successfully_received_unique|${countryCode}|${contractStatus}|0`,
+                        `successfully_received_unique|total|${contractStatus}|0`,
+                        `successfully_received_unique|${countryCode}|all|0`,
+                        `successfully_received_unique|total|all|0`
                     ];
                     
                     for (const key of keys) {
@@ -132,7 +132,11 @@ export const queries = [
             });
             
             console.log(`✅ [CONTRACTRECEIVED-OVERALL] Final aggregation has ${metricsData.size} entries`);
-            return generateCumulativeMetricsFromData(metricsData, "overall");
+            const finalAgg = new Map();
+            for (const [key, data] of metricsData) {
+                finalAgg.set(key, data.count);
+            }
+            return generateCumulativeMetricsFromData(finalAgg, "overall");
         }
     },
     {
@@ -182,14 +186,14 @@ export const queries = [
                 
                 // Create keys for different combinations
                 const keys = [
-                    `successfully_received,${contractStatus},${countryCode}`,
-                    `successfully_received,${contractStatus},total`,
-                    `successfully_received,all,${countryCode}`,
-                    `successfully_received,all,total`,
-                    `successfully_received_unique,${contractStatus},${countryCode}`,
-                    `successfully_received_unique,${contractStatus},total`,
-                    `successfully_received_unique,all,${countryCode}`,
-                    `successfully_received_unique,all,total`
+                    `successfully_received|${countryCode}|${contractStatus}|0`,
+                    `successfully_received|total|${contractStatus}|0`,
+                    `successfully_received|${countryCode}|all|0`,
+                    `successfully_received|total|all|0`,
+                    `successfully_received_unique|${countryCode}|${contractStatus}|0`,
+                    `successfully_received_unique|total|${contractStatus}|0`,
+                    `successfully_received_unique|${countryCode}|all|0`,
+                    `successfully_received_unique|total|all|0`
                 ];
                 
                 for (const key of keys) {
@@ -202,7 +206,11 @@ export const queries = [
             }
             
             console.log(`✅ [CONTRACTRECEIVED-SUBDOMAINS-OVERALL] Generated metrics for ${metricsData.size} combinations`);
-            return generateCumulativeMetricsFromData(metricsData, "overall");
+            const finalAgg = new Map();
+            for (const [key, data] of metricsData) {
+                finalAgg.set(key, data.count);
+            }
+            return generateCumulativeMetricsFromData(finalAgg, "overall");
         }
     }
 ];

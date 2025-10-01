@@ -140,7 +140,28 @@ export const queries = [
             }
             
             // Add total "all" metric
-            const allTotalKey = `successfully_received_unique|total|all|0`;
+
+            // Add "all" contract status metrics for each country (sum of all contract statuses)
+            const allByCountry = new Map(); // country -> sum of all contract statuses
+            for (const [key, value] of agg) {
+                const [status, country, cs, attempts] = key.split("|");
+                if (status === "successfully_received" && cs !== "all") {
+                    allByCountry.set(country, (allByCountry.get(country) || 0) + value);
+                }
+            }
+            
+            // Add "all" metrics for each country
+            for (const [country, count] of allByCountry) {
+                const allCountryKey = `successfully_received|${country}|all|0`;
+                agg.set(allCountryKey, count);
+                console.log(`📊 [CONTRACTRECEIVED-TODAY] All contract statuses for ${country}: successfully_received = ${count}`);
+            }
+            
+            // Add total "all" metric for successfully_received
+            const allTotalCount = Array.from(allByCountry.values()).reduce((sum, count) => sum + count, 0);
+            const allTotalReceivedKey = `successfully_received|total|all|0`;
+            agg.set(allTotalReceivedKey, allTotalCount);
+            console.log(`📊 [CONTRACTRECEIVED-TODAY] All contract statuses total: successfully_received = ${allTotalCount}`);            const allTotalKey = `successfully_received_unique|total|all|0`;
             agg.set(allTotalKey, uniqueContractIdsTotal.size);
             console.log(`📊 [CONTRACTRECEIVED-TODAY] Unique contracts (all statuses): successfully_received total = ${uniqueContractIdsTotal.size} unique contract IDs`);
 
@@ -234,19 +255,52 @@ export const queries = [
                 console.log(`   Found ${subDomainRows?.length || 0} total documents for contractId ${contractId}`);
                 
                 if (subDomainRows && subDomainRows.length > 0) {
-                    // Count by subDomain across all partitionKeys
+                    // UPDATED: Find the most recent batch (highest timestamp) and only count entities from that batch
+                    const batchTimestamps = new Map(); // partitionKey -> maxTimestamp
+                    for (const row of subDomainRows) {
+                        const partitionKey = row.partitionKey;
+                        const timestamp = row.timestamp;
+                        if (!batchTimestamps.has(partitionKey) || timestamp > batchTimestamps.get(partitionKey)) {
+                            batchTimestamps.set(partitionKey, timestamp);
+                        }
+                    }
+                    
+                    // Find the most recent batch
+                    let mostRecentBatch = null;
+                    let maxTimestamp = 0;
+                    for (const [partitionKey, timestamp] of batchTimestamps) {
+                        if (timestamp > maxTimestamp) {
+                            maxTimestamp = timestamp;
+                            mostRecentBatch = partitionKey;
+                        }
+                    }
+                    
+                    console.log(`   Most recent batch: ${mostRecentBatch} (timestamp: ${new Date(maxTimestamp * 1000).toISOString()})`);
+                    if (batchTimestamps.size > 1) {
+                        console.log(`   ⚠️  Contract published ${batchTimestamps.size} times - counting entities from most recent batch only`);
+                    }
+                    
+                    // Now count entities only from the most recent batch
                     const subDomainCounts = new Map();
                     const partitionKeyCounts = new Map();
                     const partitionKeyDetails = new Map();
                     let country = "unk";
                     let contractStatus = "unk";
+                    let totalDocsInMostRecentBatch = 0;
                     
                     for (const row of subDomainRows) {
+                        // Only count if this row belongs to the most recent batch
+                        if (row.partitionKey !== mostRecentBatch) {
+                            continue;
+                        }
+                        
                         const subDomain = row.subDomain || "unknown";
                         const partitionKey = row.partitionKey;
                         const timestamp = new Date(row.timestamp * 1000).toISOString();
                         
-                        // Count by subDomain (across all partitionKeys)
+                        totalDocsInMostRecentBatch++;
+                        
+                        // Count by subDomain (only from most recent batch)
                         subDomainCounts.set(subDomain, (subDomainCounts.get(subDomain) || 0) + 1);
                         
                         // Count by partitionKey for detailed logging
@@ -271,12 +325,14 @@ export const queries = [
                         }
                     }
                     
+                    console.log(`   Counted ${totalDocsInMostRecentBatch} entities from most recent batch`);
+                    
                     // Store contract data for table
                     contractData.push({
                         contractId,
                         country: country.toUpperCase(),
                         contractStatus: contractStatus.toUpperCase(),
-                        totalDocuments: subDomainRows.length,
+                        totalDocuments: totalDocsInMostRecentBatch,
                         partitionKeyCount: partitionKeyDetails.size,
                         subDomainCounts: Object.fromEntries(subDomainCounts),
                         partitionKeys: Array.from(partitionKeyDetails.keys())
