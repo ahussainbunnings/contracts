@@ -122,22 +122,78 @@ npm run debug:sit search 12345 contractId
 ```
 contracts/
 ├── src/
-│   ├── connections/          # Database and service connections
-│   │   ├── cosmos.js        # Cosmos DB connection with Key Vault
-│   │   ├── dynatrace.js     # Dynatrace integration
-│   │   └── keyvault.js      # Azure Key Vault client
-│   ├── queries/             # Query modules
-│   │   ├── today/           # Today's data queries
-│   │   └── debug/           # Debug and investigation tools
-│   ├── utils/               # Utility functions
+│   ├── cli/                 # CLI utilities (NEW - Refactored)
+│   │   ├── parser.js       # Argument parsing and validation
+│   │   └── formatter.js    # Output formatting and colors
+│   ├── config/              # Configuration management (NEW)
+│   │   └── sections.js     # Section configuration for grouping
+│   ├── core/                # Core utilities (NEW)
+│   │   └── query-loader.js # Dynamic query loading
+│   ├── services/            # Shared business services (NEW)
+│   │   ├── index.js        # Service exports
+│   │   ├── query-executor.js # Cosmos DB query utilities
+│   │   ├── batch-processor.js # Batch processing logic
+│   │   ├── logger.js       # Centralized logging
+│   │   └── error-handler.js # Error handling utilities
+│   ├── connections/         # Database and service connections
+│   │   ├── cosmos.js       # Cosmos DB connection with Key Vault
+│   │   ├── dynatrace.js    # Dynatrace integration
+│   │   └── keyvault.js     # Azure Key Vault client
+│   ├── queries/             # Query modules (PRESERVED STRUCTURE)
+│   │   ├── today/          # Today's data queries
+│   │   ├── overall/        # Historical data queries
+│   │   └── debug/          # Debug and investigation tools
+│   ├── utils/               # Utility functions (being migrated)
 │   │   ├── metricsGenerator.js
 │   │   ├── status.js
 │   │   └── windows.js
-│   ├── index.js             # Main dashboard application
+│   ├── index.js             # Main dashboard application (refactored)
 │   └── contractdetails.js   # Debug utility
+├── test/                    # Test files (NEW)
+│   └── batch-processor.test.js # Service tests
 ├── .env.sample              # Environment template
 ├── package.json
 └── README.md
+```
+
+## 🔄 Refactoring Progress
+
+This project has been recently refactored to improve maintainability and testability while preserving all existing business functionality:
+
+### ✅ **Completed:**
+- **Modular CLI System**: Clean argument parsing, validation, and formatted output
+- **Shared Services Layer**: Reusable query execution, batch processing, and logging utilities
+- **Configuration Management**: Centralized section configuration and dynamic query loading
+- **Error Handling**: Comprehensive error handling with context and fallbacks
+- **Testing Structure**: Basic test framework with service tests
+
+### 🔄 **In Progress:**
+- **Query Migration**: Incremental migration of query files to use shared services
+- **Utility Migration**: Moving legacy utilities to the services layer
+
+### 📋 **Enhanced Usage:**
+
+```bash
+# Show help (NEW)
+node src/index.js --help
+
+# Run with layout options (NEW)
+node src/index.js today --layout flat
+node src/index.js all overall --layout sectioned
+
+# Run with custom grouping (NEW)
+node src/index.js today --sections status,country --color always
+
+# Traditional usage (still supported)
+node src/index.js today
+node src/index.js all overall
+```
+
+### 🧪 **Testing:**
+
+```bash
+# Run service tests
+node test/batch-processor.test.js
 ```
 
 ## 🔐 Security

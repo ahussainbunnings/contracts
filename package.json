@@ -4,6 +4,7 @@
   "type": "module",
   "private": true,
   "scripts": {
+    "start": "node ./src/index.js",
     "start:sit":  "dotenv -e .env.sit  -- node ./src/index.js today",
     "start:uat":  "dotenv -e .env.uat  -- node ./src/index.js today",
     "start:prod": "dotenv -e .env.prod -- node ./src/index.js today",
