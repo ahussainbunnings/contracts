@@ -10,14 +10,14 @@ export const queries = [
         metricBase: "custom.dashboard.contractreceived.today.by_status",
         run: async (containers, win) => {
             console.log(`🔍 [CONTRACTRECEIVED-TODAY] Starting query for time window: ${win.startSec} to ${win.endSec}`);
-            
+
             const entitiesC = containers.contractEntities;
             const contractC = containers.contract;
 
             // Step 1: Query contract table for upload documents in time window
             const qUploadDocs = {
                 query: `
-                    SELECT s.batchId,
+                    SELECT s.contractBatchId as batchId,
                            s.status,
                            s.attempts
                     FROM s
@@ -29,7 +29,7 @@ export const queries = [
                     { name: "@endSec", value: win.endSec }
                 ]
             };
-            
+
             console.log(`🔍 [CONTRACTRECEIVED-TODAY] Querying contract table for upload documents...`);
             const { resources: uploadDocs } = await contractC.items.query(qUploadDocs).fetchAll();
             console.log(`✅ [CONTRACTRECEIVED-TODAY] Found ${uploadDocs?.length || 0} upload documents in time window`);
@@ -40,20 +40,39 @@ export const queries = [
             }
 
             // Step 2: Get batchIds to lookup entity data (remove "CMP-Contract-" prefix)
-            const batchIds = uploadDocs.map(doc => {
-                const batchId = doc.batchId;
-                return batchId.startsWith("CMP-Contract-") ? batchId.substring(13) : batchId;
+            const isStr = v => typeof v === "string";
+            const toEntityBatchId = (batchId) =>
+                isStr(batchId) && batchId.startsWith("CMP-Contract-")
+                    ? batchId.substring(13)
+                    : (isStr(batchId) ? batchId : "");
+
+            // Log & drop any rows with missing/invalid batchId
+            const cleanUploadDocs = uploadDocs.filter((d, i) => {
+                const ok = isStr(d?.batchId) && d.batchId.length > 0;
+                if (!ok) {
+                    console.warn(`[CONTRACTRECEIVED-TODAY] Skipping upload doc at index ${i} due to invalid batchId:`, {
+                        type: typeof d?.batchId, value: d?.batchId
+                    });
+                }
+                return ok;
             });
+
+            if (cleanUploadDocs.length === 0) {
+                console.log(`⚠️ [CONTRACTRECEIVED-TODAY] No valid upload docs with batchId; returning zero metrics`);
+                return generateCumulativeMetricsFromData(new Map(), "today");
+            }
+
+            const batchIds = cleanUploadDocs.map(d => toEntityBatchId(d.batchId)).filter(Boolean);
             console.log(`🔍 [CONTRACTRECEIVED-TODAY] Processing ${batchIds.length} batchIds for received analysis...`);
-            
+
             const entityData = new Map(); // batchId -> entity data
-            
+
             // Process in chunks to avoid query size limits
             const chunkSize = 50;
             for (let i = 0; i < batchIds.length; i += chunkSize) {
                 const chunk = batchIds.slice(i, i + chunkSize);
                 console.log(`🔍 [CONTRACTRECEIVED-TODAY] Looking up entity data for chunk ${Math.floor(i/chunkSize) + 1}...`);
-                
+
                 // Build parameter array for this chunk
                 const parameters = [];
                 const placeholders = [];
@@ -61,7 +80,7 @@ export const queries = [
                     placeholders.push(`@batchId${j}`);
                     parameters.push({ name: `@batchId${j}`, value: chunk[j] });
                 }
-                
+
                 const qEntityData = {
                     query: `
                         SELECT c.header.metadata.countryCode AS countryCode,
@@ -74,10 +93,10 @@ export const queries = [
                     `,
                     parameters: parameters
                 };
-                
+
                 const { resources: entities } = await entitiesC.items.query(qEntityData).fetchAll();
-                
-                for (const entity of entities || []) {
+
+                for (const entity of (entities || [])) {
                     entityData.set(entity.batchId, entity);
                     console.log(`✅ [CONTRACTRECEIVED-TODAY] Entity data for ${entity.batchId}: country=${entity.countryCode}, status=${entity.contractStatus}, contractId=${entity.contractId}`);
                 }
@@ -89,34 +108,51 @@ export const queries = [
             const agg = new Map(); // key = `${status}|${country}|${cs}|${attempts}`
             const normCountry = (raw) => String(raw || "").toLowerCase().trim();
             const normContractStatus = (raw) => String(raw || "").toLowerCase().trim();
-            
-            // Track unique contract IDs for "all" metrics
+
+            // Track unique contract IDs for counting unique received contracts
+            const uniqueContractIdsByCountryStatus = new Set(); // Set of unique contract IDs by country and status and contract status
             const uniqueContractIdsByCountry = new Set(); // Set of unique contract IDs by country
             const uniqueContractIdsTotal = new Set(); // Set of unique contract IDs total
-            
-            console.log(`🔍 [CONTRACTRECEIVED-TODAY] Processing ${uploadDocs.length} contract records...`);
-            
-            for (const uploadDoc of uploadDocs) {
-                const batchId = uploadDoc.batchId;
-                const entityBatchId = batchId.startsWith("CMP-Contract-") ? batchId.substring(13) : batchId;
+
+            console.log(`🔍 [CONTRACTRECEIVED-TODAY] Processing ${cleanUploadDocs.length} contract records...`);
+
+            for (const uploadDoc of cleanUploadDocs) {
+                const batchId = uploadDoc.batchId; // guaranteed string by filter
+                const entityBatchId = toEntityBatchId(batchId);
+                if (!entityBatchId) {
+                    console.warn(`[CONTRACTRECEIVED-TODAY] Derived empty entityBatchId from batchId='${batchId}', skipping`);
+                    continue;
+                }
                 const entity = entityData.get(entityBatchId);
-                
+
                 if (entity) {
                     const country = normCountry(entity.countryCode || "unk");
                     const cs = normContractStatus(entity.contractStatus || "unk");
                     const contractId = entity.contractId;
                     const attempts = uploadDoc.attempts || 0;
                     const status = uploadDoc.status || "";
-                    
-                    // Contract header exists and upload document exists - Successfully received
-                    const statusLabel = "successfully_received";
-                    const k = `${statusLabel}|${country}|${cs}|0`;
-                    agg.set(k, (agg.get(k) || 0) + 1);
-                    console.log(`✅ [CONTRACTRECEIVED-TODAY] Successfully received: ${batchId} -> ${statusLabel}|${country}|${cs}|0 (attempts=${attempts}, status=${status})`);
-                    
-                    // Track unique contract IDs for "all" metrics
-                    uniqueContractIdsByCountry.add(`${contractId}|${country}`);
-                    uniqueContractIdsTotal.add(contractId);
+
+                    console.log(`📊 [CONTRACTRECEIVED-TODAY] Processing: ${batchId} -> country=${country}, contractStatus=${cs}, contractId=${contractId}, attempts=${attempts}`);
+
+                    // Track unique contract IDs for aggregation (only count each unique contract once per status/country/contractStatus combination)
+                    if (contractId) {
+                        const statusLabel = "successfully_received";
+                        const uniqueKey = `${contractId}|${statusLabel}|${country}|${cs}`;
+                        if (!uniqueContractIdsByCountryStatus.has(uniqueKey)) {
+                            uniqueContractIdsByCountryStatus.add(uniqueKey);
+                            
+                            // Contract header exists and upload document exists - count this unique received contract
+                            const k = `${statusLabel}|${country}|${cs}|0`;
+                            agg.set(k, (agg.get(k) || 0) + 1);
+                            console.log(`✅ [CONTRACTRECEIVED-TODAY] Successfully received: ${batchId} -> ${statusLabel}|${country}|${cs}|0 (attempts=${attempts}, status=${status})`);
+                        } else {
+                            console.log(`🔄 [CONTRACTRECEIVED-TODAY] Duplicate contract: ${batchId} -> contractId=${contractId} already counted for ${statusLabel}|${country}|${cs}`);
+                        }
+                        
+                        // Also track for "all" metrics
+                        uniqueContractIdsByCountry.add(`${contractId}|${country}`);
+                        uniqueContractIdsTotal.add(contractId);
+                    }
                 } else {
                     console.log(`⚠️ [CONTRACTRECEIVED-TODAY] Upload doc exists but no entity data for ${batchId} (entityBatchId: ${entityBatchId})`);
                 }
@@ -124,21 +160,21 @@ export const queries = [
 
             // Step 4: Add unique contract ID metrics
             console.log(`🔍 [CONTRACTRECEIVED-TODAY] Adding unique contract ID metrics...`);
-            
+
             // Count unique contracts by country for "all" metrics
             const uniqueByCountry = new Map(); // country -> count
             for (const contractCountry of uniqueContractIdsByCountry) {
                 const [contractId, country] = contractCountry.split('|');
                 uniqueByCountry.set(country, (uniqueByCountry.get(country) || 0) + 1);
             }
-            
+
             // Add "all" metrics for each country
             for (const [country, count] of uniqueByCountry) {
                 const allKey = `successfully_received_unique|${country}|all|0`;
                 agg.set(allKey, count);
                 console.log(`📊 [CONTRACTRECEIVED-TODAY] Unique contracts (all statuses): successfully_received ${country} = ${count} unique contract IDs`);
             }
-            
+
             // Add total "all" metric
 
             // Add "all" contract status metrics for each country (sum of all contract statuses)
@@ -149,19 +185,20 @@ export const queries = [
                     allByCountry.set(country, (allByCountry.get(country) || 0) + value);
                 }
             }
-            
+
             // Add "all" metrics for each country
             for (const [country, count] of allByCountry) {
                 const allCountryKey = `successfully_received|${country}|all|0`;
                 agg.set(allCountryKey, count);
                 console.log(`📊 [CONTRACTRECEIVED-TODAY] All contract statuses for ${country}: successfully_received = ${count}`);
             }
-            
+
             // Add total "all" metric for successfully_received
             const allTotalCount = Array.from(allByCountry.values()).reduce((sum, count) => sum + count, 0);
             const allTotalReceivedKey = `successfully_received|total|all|0`;
             agg.set(allTotalReceivedKey, allTotalCount);
-            console.log(`📊 [CONTRACTRECEIVED-TODAY] All contract statuses total: successfully_received = ${allTotalCount}`);            const allTotalKey = `successfully_received_unique|total|all|0`;
+            console.log(`📊 [CONTRACTRECEIVED-TODAY] All contract statuses total: successfully_received = ${allTotalCount}`);
+            const allTotalKey = `successfully_received_unique|total|all|0`;
             agg.set(allTotalKey, uniqueContractIdsTotal.size);
             console.log(`📊 [CONTRACTRECEIVED-TODAY] Unique contracts (all statuses): successfully_received total = ${uniqueContractIdsTotal.size} unique contract IDs`);
 
@@ -195,7 +232,7 @@ export const queries = [
         metricBase: "custom.dashboard.contractreceived.today.subdomains",
         run: async (containers, win) => {
             console.log(`🔍 [CONTRACTRECEIVED-SUBDOMAINS-TODAY] Starting query for time window: ${win.startSec} to ${win.endSec}`);
-            
+
             const entitiesC = containers.contractEntities;
 
             // Step 1: Find all unique contractIds in today's time window
@@ -211,11 +248,11 @@ export const queries = [
                     { name: "@endSec",   value: win.endSec }
                 ]
             };
-            
+
             console.log(`🔍 [CONTRACTRECEIVED-SUBDOMAINS-TODAY] Querying for unique contractIds...`);
             const { resources: contractIds } = await entitiesC.items.query(qContractIds).fetchAll();
             console.log(`✅ [CONTRACTRECEIVED-SUBDOMAINS-TODAY] Found ${contractIds?.length || 0} unique contractIds in time window`);
-            
+
             if (!contractIds || contractIds.length === 0) {
                 console.log(`⚠️ [CONTRACTRECEIVED-SUBDOMAINS-TODAY] No contractIds found, returning zero metrics`);
                 return generateCumulativeMetricsFromData(new Map(), "today");
@@ -224,16 +261,16 @@ export const queries = [
             // Step 2: For each contractId, count subDomains across ALL partitionKeys
             const agg = new Map(); // key = `${subDomain}|${country}|${contractStatus}|${window}`
             const normCountry = (raw) => String(raw || "").toLowerCase().trim();
-            
+
             console.log(`🔍 [CONTRACTRECEIVED-SUBDOMAINS-TODAY] Analyzing subDomains for ${contractIds.length} contracts...`);
-            
+
             // Store all contract data for table display
             const contractData = [];
-            
+
             for (const contractIdRow of contractIds) {
                 const contractId = contractIdRow.contractId;
                 console.log(`\n📋 [CONTRACTRECEIVED-SUBDOMAINS-TODAY] Analyzing contractId: ${contractId}`);
-                
+
                 // Query all subDomains for this contractId across ALL partitionKeys
                 const qSubDomains = {
                     query: `
@@ -250,10 +287,10 @@ export const queries = [
                         { name: "@contractId", value: contractId }
                     ]
                 };
-                
+
                 const { resources: subDomainRows } = await entitiesC.items.query(qSubDomains).fetchAll();
                 console.log(`   Found ${subDomainRows?.length || 0} total documents for contractId ${contractId}`);
-                
+
                 if (subDomainRows && subDomainRows.length > 0) {
                     // UPDATED: Find the most recent batch (highest timestamp) and only count entities from that batch
                     const batchTimestamps = new Map(); // partitionKey -> maxTimestamp
@@ -264,7 +301,7 @@ export const queries = [
                             batchTimestamps.set(partitionKey, timestamp);
                         }
                     }
-                    
+
                     // Find the most recent batch
                     let mostRecentBatch = null;
                     let maxTimestamp = 0;
@@ -274,12 +311,12 @@ export const queries = [
                             mostRecentBatch = partitionKey;
                         }
                     }
-                    
+
                     console.log(`   Most recent batch: ${mostRecentBatch} (timestamp: ${new Date(maxTimestamp * 1000).toISOString()})`);
                     if (batchTimestamps.size > 1) {
                         console.log(`   ⚠️  Contract published ${batchTimestamps.size} times - counting entities from most recent batch only`);
                     }
-                    
+
                     // Now count entities only from the most recent batch
                     const subDomainCounts = new Map();
                     const partitionKeyCounts = new Map();
@@ -287,26 +324,26 @@ export const queries = [
                     let country = "unk";
                     let contractStatus = "unk";
                     let totalDocsInMostRecentBatch = 0;
-                    
+
                     for (const row of subDomainRows) {
                         // Only count if this row belongs to the most recent batch
                         if (row.partitionKey !== mostRecentBatch) {
                             continue;
                         }
-                        
+
                         const subDomain = row.subDomain || "unknown";
                         const partitionKey = row.partitionKey;
                         const timestamp = new Date(row.timestamp * 1000).toISOString();
-                        
+
                         totalDocsInMostRecentBatch++;
-                        
+
                         // Count by subDomain (only from most recent batch)
                         subDomainCounts.set(subDomain, (subDomainCounts.get(subDomain) || 0) + 1);
-                        
+
                         // Count by partitionKey for detailed logging
                         const key = `${partitionKey}|${subDomain}`;
                         partitionKeyCounts.set(key, (partitionKeyCounts.get(key) || 0) + 1);
-                        
+
                         // Store details for each partitionKey
                         if (!partitionKeyDetails.has(partitionKey)) {
                             partitionKeyDetails.set(partitionKey, {
@@ -317,16 +354,16 @@ export const queries = [
                             });
                         }
                         partitionKeyDetails.get(partitionKey).subDomains.add(subDomain);
-                        
+
                         // Use the first row's country and contractStatus
                         if (country === "unk") {
                             country = normCountry(row.countryCode);
                             contractStatus = String(row.contractStatus || "").toLowerCase().trim();
                         }
                     }
-                    
+
                     console.log(`   Counted ${totalDocsInMostRecentBatch} entities from most recent batch`);
-                    
+
                     // Store contract data for table
                     contractData.push({
                         contractId,
@@ -337,7 +374,7 @@ export const queries = [
                         subDomainCounts: Object.fromEntries(subDomainCounts),
                         partitionKeys: Array.from(partitionKeyDetails.keys())
                     });
-                    
+
                     // Create metrics for each subDomain (aggregated across all partitionKeys)
                     for (const [subDomain, count] of subDomainCounts) {
                         const k = `${subDomain}|${country}|${contractStatus}|today`;
@@ -350,24 +387,24 @@ export const queries = [
             console.log(`\n${'='.repeat(120)}`);
             console.log(`📊 CONTRACT SUBDOMAIN ANALYSIS - CLEAN TABLE FORMAT`);
             console.log(`${'='.repeat(120)}`);
-            
+
             if (contractData.length > 0) {
                 // Summary table
                 console.log(`\n📋 SUMMARY BY CONTRACT:`);
                 console.log(`${'-'.repeat(120)}`);
                 console.log(`| ${'Contract ID'.padEnd(12)} | ${'Country'.padEnd(8)} | ${'Status'.padEnd(10)} | ${'PartitionKeys'.padEnd(15)} | ${'Total Docs'.padEnd(12)} | ${'Contract'.padEnd(8)} | ${'ContractLine'.padEnd(12)} | ${'ContractCustomer'.padEnd(16)} |`);
                 console.log(`${'-'.repeat(120)}`);
-                
+
                 for (const contract of contractData) {
                     const contractCount = contract.subDomainCounts.Contract || 0;
                     const contractLineCount = contract.subDomainCounts.ContractLine || 0;
                     const contractCustomerCount = contract.subDomainCounts.ContractCustomer || 0;
-                    
+
                     console.log(`| ${contract.contractId.padEnd(12)} | ${contract.country.padEnd(8)} | ${contract.contractStatus.padEnd(10)} | ${contract.partitionKeyCount.toString().padEnd(15)} | ${contract.totalDocuments.toString().padEnd(12)} | ${contractCount.toString().padEnd(8)} | ${contractLineCount.toString().padEnd(12)} | ${contractCustomerCount.toString().padEnd(16)} |`);
                 }
-                
+
                 console.log(`${'-'.repeat(120)}`);
-                
+
                 // Totals
                 const totalContracts = contractData.length;
                 const totalPartitionKeys = contractData.reduce((sum, c) => sum + c.partitionKeyCount, 0);
@@ -375,7 +412,7 @@ export const queries = [
                 const totalContractDocs = contractData.reduce((sum, c) => sum + (c.subDomainCounts.Contract || 0), 0);
                 const totalContractLineDocs = contractData.reduce((sum, c) => sum + (c.subDomainCounts.ContractLine || 0), 0);
                 const totalContractCustomerDocs = contractData.reduce((sum, c) => sum + (c.subDomainCounts.ContractCustomer || 0), 0);
-                
+
                 console.log(`\n📊 TOTALS:`);
                 console.log(`${'-'.repeat(120)}`);
                 console.log(`| ${'Total Contracts'.padEnd(12)} | ${'Total PartitionKeys'.padEnd(20)} | ${'Total Documents'.padEnd(15)} | ${'Contract'.padEnd(8)} | ${'ContractLine'.padEnd(12)} | ${'ContractCustomer'.padEnd(16)} |`);
@@ -385,7 +422,7 @@ export const queries = [
             } else {
                 console.log(`\n❌ No contract data found for the specified time window.`);
             }
-            
+
             console.log(`${'='.repeat(120)}\n`);
 
             // Calculate totals for each subDomain across all contracts
@@ -404,7 +441,7 @@ export const queries = [
             const results = [];
             for (const [key, value] of finalAgg) {
                 const [subDomain, country, contractStatus, window] = key.split('|');
-                
+
                 results.push({
                     labels: {
                         status: subDomain,
