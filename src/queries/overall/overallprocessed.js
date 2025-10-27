@@ -2,7 +2,7 @@
 // All contract processed queries for overall
 
 import { generateProcessedCumulativeMetricsFromData } from "../../utils/metricsGenerator.js";
-import { normalizeStatus, mapEntityStatusToReadable } from "../../utils/status.js";
+import { mapEntityStatusToReadable } from "../../utils/status.js";
 
 export const queries = [
     {
@@ -19,7 +19,8 @@ export const queries = [
                 query: `
                     SELECT c.batchId,
                            c.status,
-                           c.attempts
+                           c.attempts,
+                           c._ts as timestamp
                     FROM c
                     WHERE c._ts >= @startSec AND c._ts < @endSec
                       AND CONTAINS(c.id, "Upload")
@@ -75,40 +76,67 @@ export const queries = [
             
             console.log(`✅ [CONTRACTPROCESSED-OVERALL] Retrieved entity data for ${entityData.size} batches`);
 
-            // Step 4: Process entity data and generate metrics
-            const metricsData = new Map(); // key -> { count, uniqueContracts }
+            // Step 4: Build a map of contractId -> most recent contract document
+            console.log(`🔍 [CONTRACTPROCESSED-OVERALL] Finding most recent upload for each contract...`);
+            const latestContractByContractId = new Map(); // contractId -> { contractRow, entity }
             
-            for (const [batchId, entities] of entityData) {
+            for (const contractRow of contractRows) {
+                const batchId = contractRow.batchId;
+                const entities = entityData.get(batchId) || [];
+                
                 for (const entity of entities) {
                     const contractId = entity.contractId;
-                    const contractStatus = entity.contractStatus;
-                    const countryCode = entity.countryCode;
-                    const subDomain = entity.subDomain;
+                    if (!contractId) continue;
                     
-                    if (!contractId || !contractStatus) continue;
+                    const existing = latestContractByContractId.get(contractId);
                     
-                    const status = mapEntityStatusToReadable(contractStatus);
-                    const country = countryCode?.toLowerCase() || 'unknown';
-                    
-                    // Create keys for different combinations
-                    const keys = [
-                        `completed,${status},${country}`,
-                        `completed,${status},total`,
-                        `completed,all,${country}`,
-                        `completed,all,total`,
-                        `completed_unique,${status},${country}`,
-                        `completed_unique,${status},total`,
-                        `completed_unique,all,${country}`,
-                        `completed_unique,all,total`
-                    ];
-                    
-                    for (const key of keys) {
-                        if (!metricsData.has(key)) {
-                            metricsData.set(key, { count: 0, uniqueContracts: new Set() });
+                    // Keep the contract with the latest timestamp
+                    if (!existing || contractRow.timestamp > existing.contractRow.timestamp) {
+                        latestContractByContractId.set(contractId, { contractRow, entity });
+                        if (existing) {
+                            console.log(`🔄 [CONTRACTPROCESSED-OVERALL] Replaced older upload for contract ${contractId} (old ts: ${existing.contractRow.timestamp}, new ts: ${contractRow.timestamp})`);
                         }
-                        metricsData.get(key).count++;
-                        metricsData.get(key).uniqueContracts.add(contractId);
+                    } else {
+                        console.log(`⏭️ [CONTRACTPROCESSED-OVERALL] Skipping older upload for contract ${contractId} (current ts: ${contractRow.timestamp} <= latest ts: ${existing.contractRow.timestamp})`);
                     }
+                }
+            }
+            
+            console.log(`✅ [CONTRACTPROCESSED-OVERALL] Found ${latestContractByContractId.size} unique contracts with their latest uploads`);
+
+            // Step 5: Process only the latest contracts and generate metrics
+            const metricsData = new Map(); // key -> { count, uniqueContracts }
+            
+            for (const [contractId, { contractRow, entity }] of latestContractByContractId) {
+                const contractStatus = entity.contractStatus;
+                const countryCode = entity.countryCode;
+                const subDomain = entity.subDomain;
+                
+                if (!contractId || !contractStatus) continue;
+                
+                const status = mapEntityStatusToReadable(contractStatus);
+                const country = countryCode?.toLowerCase() || 'unknown';
+                
+                console.log(`📊 [CONTRACTPROCESSED-OVERALL] Processing latest upload for contract ${contractId}: batchId=${contractRow.batchId} -> status=${status}, country=${country}, timestamp=${contractRow.timestamp}`);
+                
+                // Create keys for different combinations
+                const keys = [
+                    `completed,${status},${country}`,
+                    `completed,${status},total`,
+                    `completed,all,${country}`,
+                    `completed,all,total`,
+                    `completed_unique,${status},${country}`,
+                    `completed_unique,${status},total`,
+                    `completed_unique,all,${country}`,
+                    `completed_unique,all,total`
+                ];
+                
+                for (const key of keys) {
+                    if (!metricsData.has(key)) {
+                        metricsData.set(key, { count: 0, uniqueContracts: new Set() });
+                    }
+                    metricsData.get(key).count++;
+                    metricsData.get(key).uniqueContracts.add(contractId);
                 }
             }
             

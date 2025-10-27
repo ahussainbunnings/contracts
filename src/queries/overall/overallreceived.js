@@ -19,7 +19,8 @@ export const queries = [
                 query: `
                     SELECT c.batchId,
                            c.status,
-                           c.attempts
+                           c.attempts,
+                           c._ts as timestamp
                     FROM c
                     WHERE c._ts >= @startSec AND c._ts < @endSec
                       AND CONTAINS(c.id, "Upload")
@@ -94,42 +95,65 @@ export const queries = [
             
             console.log(`✅ [CONTRACTRECEIVED-OVERALL] Retrieved entity data for ${entityData.size} batches`);
             
-            // Step 3: Process contract records and generate metrics
-            const metricsData = new Map(); // key -> { count, uniqueContracts }
+            // Step 3: Build a map of contractId -> most recent upload document
+            console.log(`🔍 [CONTRACTRECEIVED-OVERALL] Finding most recent upload for each contract...`);
+            const latestUploadByContractId = new Map(); // contractId -> { uploadDoc, contractData }
             
-            uploadDocs.forEach(uploadDoc => {
+            for (const uploadDoc of uploadDocs) {
                 const batchId = uploadDoc.batchId;
-                const status = uploadDoc.status;
-                const attempts = uploadDoc.attempts || 0;
-                
                 const contractData = entityData.get(batchId) || [];
                 
-                contractData.forEach(contract => {
+                for (const contract of contractData) {
                     const contractId = contract.contractId;
-                    const contractStatus = mapEntityStatusToReadable(contract.contractStatus);
-                    const countryCode = contract.countryCode?.toLowerCase() || 'unknown';
+                    if (!contractId) continue;
                     
-                    // Create keys for different combinations
-                    const keys = [
-                        `successfully_received|${countryCode}|${contractStatus}|0`,
-                        `successfully_received|total|${contractStatus}|0`,
-                        `successfully_received|${countryCode}|all|0`,
-                        `successfully_received|total|all|0`,
-                        `successfully_received_unique|${countryCode}|${contractStatus}|0`,
-                        `successfully_received_unique|total|${contractStatus}|0`,
-                        `successfully_received_unique|${countryCode}|all|0`,
-                        `successfully_received_unique|total|all|0`
-                    ];
+                    const existing = latestUploadByContractId.get(contractId);
                     
-                    for (const key of keys) {
-                        if (!metricsData.has(key)) {
-                            metricsData.set(key, { count: 0, uniqueContracts: new Set() });
+                    // Keep the upload with the latest timestamp
+                    if (!existing || uploadDoc.timestamp > existing.uploadDoc.timestamp) {
+                        latestUploadByContractId.set(contractId, { uploadDoc, contract });
+                        if (existing) {
+                            console.log(`🔄 [CONTRACTRECEIVED-OVERALL] Replaced older upload for contract ${contractId} (old ts: ${existing.uploadDoc.timestamp}, new ts: ${uploadDoc.timestamp})`);
                         }
-                        metricsData.get(key).count++;
-                        metricsData.get(key).uniqueContracts.add(contractId);
+                    } else {
+                        console.log(`⏭️ [CONTRACTRECEIVED-OVERALL] Skipping older upload for contract ${contractId} (current ts: ${uploadDoc.timestamp} <= latest ts: ${existing.uploadDoc.timestamp})`);
                     }
-                });
-            });
+                }
+            }
+            
+            console.log(`✅ [CONTRACTRECEIVED-OVERALL] Found ${latestUploadByContractId.size} unique contracts with their latest uploads`);
+            
+            // Step 4: Process only the latest uploads and generate metrics
+            const metricsData = new Map(); // key -> { count, uniqueContracts }
+            
+            for (const [contractId, { uploadDoc, contract }] of latestUploadByContractId) {
+                const status = uploadDoc.status;
+                const attempts = uploadDoc.attempts || 0;
+                const contractStatus = mapEntityStatusToReadable(contract.contractStatus);
+                const countryCode = contract.countryCode?.toLowerCase() || 'unknown';
+                
+                console.log(`📊 [CONTRACTRECEIVED-OVERALL] Processing latest upload for contract ${contractId}: batchId=${uploadDoc.batchId} -> country=${countryCode}, contractStatus=${contractStatus}, timestamp=${uploadDoc.timestamp}`);
+                
+                // Create keys for different combinations
+                const keys = [
+                    `successfully_received|${countryCode}|${contractStatus}|0`,
+                    `successfully_received|total|${contractStatus}|0`,
+                    `successfully_received|${countryCode}|all|0`,
+                    `successfully_received|total|all|0`,
+                    `successfully_received_unique|${countryCode}|${contractStatus}|0`,
+                    `successfully_received_unique|total|${contractStatus}|0`,
+                    `successfully_received_unique|${countryCode}|all|0`,
+                    `successfully_received_unique|total|all|0`
+                ];
+                
+                for (const key of keys) {
+                    if (!metricsData.has(key)) {
+                        metricsData.set(key, { count: 0, uniqueContracts: new Set() });
+                    }
+                    metricsData.get(key).count++;
+                    metricsData.get(key).uniqueContracts.add(contractId);
+                }
+            }
             
             console.log(`✅ [CONTRACTRECEIVED-OVERALL] Final aggregation has ${metricsData.size} entries`);
             const finalAgg = new Map();

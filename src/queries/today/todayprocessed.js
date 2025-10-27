@@ -19,7 +19,8 @@ export const queries = [
                 query: `
                     SELECT s.contractBatchId as batchId,
                            s.status,
-                           s.attempts
+                           s.attempts,
+                           s._ts as timestamp
                     FROM s
                     WHERE s._ts >= @startSec AND s._ts < @endSec
                       AND CONTAINS(s.id, "Upload")
@@ -105,57 +106,69 @@ export const queries = [
 
             console.log(`✅ [CONTRACTPROCESSED-TODAY] Entity data lookup complete. Found ${entityData.size} entities`);
 
-            // Step 3: Process contracts and build aggregations
-            const agg = new Map(); // key = `${status}|${country}|${cs}|${attempts}`
-            const normCountry = (raw) => String(raw || "").toLowerCase().trim();
-            const normContractStatus = (raw) => String(raw || "").toLowerCase().trim();
-
-            // Track unique contract IDs for counting unique processed contracts
-            const uniqueContractIdsByCountryStatus = new Set(); // Set of unique contract IDs by country and status and contract status
-            const uniqueContractIdsByCountry = new Set(); // Set of unique contract IDs by country
-            const uniqueContractIdsTotal = new Set(); // Set of unique contract IDs total
-
-            console.log(`🔍 [CONTRACTPROCESSED-TODAY] Processing ${cleanContractRows.length} contract records...`);
+            // Step 3: Build a map of contractId -> most recent contract document
+            console.log(`🔍 [CONTRACTPROCESSED-TODAY] Finding most recent upload for each contract...`);
+            const latestContractByContractId = new Map(); // contractId -> { contractRow, entity }
 
             for (const contractRow of cleanContractRows) {
-                const batchId = contractRow.batchId; // guaranteed string by filter
+                const batchId = contractRow.batchId;
                 const entityBatchId = toEntityBatchId(batchId);
                 if (!entityBatchId) {
                     console.warn(`[CONTRACTPROCESSED-TODAY] Derived empty entityBatchId from batchId='${batchId}', skipping`);
                     continue;
                 }
                 const entity = entityData.get(entityBatchId);
-
-                if (entity) {
-                    const country = normCountry(entity.countryCode || "unk");
-                    const cs = normContractStatus(entity.contractStatus || "unk");
+                
+                if (entity && entity.contractId) {
                     const contractId = entity.contractId;
-                    const attempts = contractRow.attempts || 0;
-                    const status = normalizeStatus(contractRow.status);
-
-                    console.log(`📊 [CONTRACTPROCESSED-TODAY] Processed: ${batchId} -> status=${status}, country=${country}, contractStatus=${cs}, attempts=${attempts}`);
-
-                    // Track unique contract IDs for aggregation (only count each unique contract once per status/country/contractStatus combination)
-                    if (contractId) {
-                        const uniqueKey = `${contractId}|${status}|${country}|${cs}`;
-                        if (!uniqueContractIdsByCountryStatus.has(uniqueKey)) {
-                            uniqueContractIdsByCountryStatus.add(uniqueKey);
-                            
-                            // Contract header exists and upload document exists - count this unique processed contract
-                            const k = `${status}|${country}|${cs}|0`;
-                            agg.set(k, (agg.get(k) || 0) + 1);
+                    const existing = latestContractByContractId.get(contractId);
+                    
+                    // Keep the contract with the latest timestamp
+                    if (!existing || contractRow.timestamp > existing.contractRow.timestamp) {
+                        latestContractByContractId.set(contractId, { contractRow, entity });
+                        if (existing) {
+                            console.log(`🔄 [CONTRACTPROCESSED-TODAY] Replaced older upload for contract ${contractId} (old ts: ${existing.contractRow.timestamp}, new ts: ${contractRow.timestamp})`);
                         }
-                        
-                        // Also track for "all" metrics
-                        uniqueContractIdsByCountry.add(`${contractId}|${country}`);
-                        uniqueContractIdsTotal.add(contractId);
+                    } else {
+                        console.log(`⏭️ [CONTRACTPROCESSED-TODAY] Skipping older upload for contract ${contractId} (current ts: ${contractRow.timestamp} <= latest ts: ${existing.contractRow.timestamp})`);
                     }
-                } else {
+                } else if (!entity) {
                     console.log(`⚠️ [CONTRACTPROCESSED-TODAY] Upload doc exists but no entity data for ${batchId} (entityBatchId: ${entityBatchId})`);
                 }
             }
 
-            // Step 4: Add "all" status metrics and unique contract ID metrics
+            console.log(`✅ [CONTRACTPROCESSED-TODAY] Found ${latestContractByContractId.size} unique contracts with their latest uploads`);
+
+            // Step 4: Process only the latest contracts and build aggregations
+            const agg = new Map(); // key = `${status}|${country}|${cs}|${attempts}`
+            const normCountry = (raw) => String(raw || "").toLowerCase().trim();
+            const normContractStatus = (raw) => String(raw || "").toLowerCase().trim();
+
+            // Track unique contract IDs for counting unique processed contracts
+            const uniqueContractIdsByCountry = new Set(); // Set of unique contract IDs by country
+            const uniqueContractIdsTotal = new Set(); // Set of unique contract IDs total
+
+            console.log(`🔍 [CONTRACTPROCESSED-TODAY] Processing ${latestContractByContractId.size} latest contract uploads...`);
+
+            for (const [contractId, { contractRow, entity }] of latestContractByContractId) {
+                const country = normCountry(entity.countryCode || "unk");
+                const cs = normContractStatus(entity.contractStatus || "unk");
+                const attempts = contractRow.attempts || 0;
+                const status = normalizeStatus(contractRow.status);
+                const batchId = contractRow.batchId;
+
+                console.log(`📊 [CONTRACTPROCESSED-TODAY] Processing latest upload for contract ${contractId}: ${batchId} -> status=${status}, country=${country}, contractStatus=${cs}, attempts=${attempts}, timestamp=${contractRow.timestamp}`);
+
+                // Contract header exists and upload document exists - count this unique processed contract
+                const k = `${status}|${country}|${cs}|0`;
+                agg.set(k, (agg.get(k) || 0) + 1);
+                
+                // Track for "all" metrics
+                uniqueContractIdsByCountry.add(`${contractId}|${country}`);
+                uniqueContractIdsTotal.add(contractId);
+            }
+
+            // Step 5: Add "all" status metrics and unique contract ID metrics
             console.log(`🔍 [CONTRACTPROCESSED-TODAY] Adding "all" status and unique contract ID metrics...`);
 
             // Calculate "all" status metrics by summing all contract statuses for each country/status combination
