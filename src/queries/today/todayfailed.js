@@ -1,4 +1,3 @@
-import { generateCumulativeMetricsFromData } from "../../utils/metricsGenerator.js";
 
 export const queries = [
     {
@@ -91,9 +90,51 @@ export const queries = [
                 }
 
                 const failedRecordsRaw = result.resources;
+                
+                // DEDUPLICATION: Keep only the most recent failure for each contractId
+                console.log(`🔍 [CONTRACTFAILED-TODAY] Deduplicating failed records by contractId...`);
+                const latestFailureByContract = new Map(); // contractId -> latest failed record
+                
+                failedRecordsRaw.forEach(record => {
+                    const contractId = record.contractId;
+                    const timestamp = record._ts;
+                    
+                    if (!latestFailureByContract.has(contractId)) {
+                        latestFailureByContract.set(contractId, record);
+                    } else {
+                        const existing = latestFailureByContract.get(contractId);
+                        if (timestamp > existing._ts) {
+                            console.log(`🔄 [CONTRACTFAILED-TODAY] Replaced older failure for contract ${contractId} (old ts: ${existing._ts}, new ts: ${timestamp})`);
+                            latestFailureByContract.set(contractId, record);
+                        }
+                    }
+                });
+                
+                const deduplicatedFailures = Array.from(latestFailureByContract.values());
+                console.log(`✅ [CONTRACTFAILED-TODAY] After deduplication: ${failedRecordsRaw.length} records -> ${deduplicatedFailures.length} unique contracts with latest failures\n`);
+                
+                // Log details of each unique failed record
+                console.log(`📋 [CONTRACTFAILED-TODAY] Failed Record Details (Latest per Contract):`);
+                deduplicatedFailures.forEach((record, idx) => {
+                    console.log(`\n   Record ${idx + 1}:`);
+                    console.log(`   ├─ ID: ${record.id}`);
+                    console.log(`   ├─ Contract ID: ${record.contractId}`);
+                    console.log(`   ├─ Batch ID: ${record.contractBatchId}`);
+                    console.log(`   ├─ Entity Type: ${record.largeEntityType}`);
+                    console.log(`   ├─ Retry Count: ${record.empRetryCount || 0}`);
+                    console.log(`   ├─ Timestamp: ${new Date(record._ts * 1000).toISOString()}`);
+                    console.log(`   └─ Salesforce Result: ${record.salesforceResponse?.result || 'N/A'}`);
+                    if (record.salesforceResponse?.errors?.length > 0) {
+                        record.salesforceResponse.errors.forEach((error, errIdx) => {
+                            console.log(`      Error ${errIdx + 1}: ${error.statusCode} - ${error.message}`);
+                        });
+                    }
+                });
+                console.log(`\n`);
+
                 const failedRecordsGrouped = new Map(); // Key: entityType|errorCode|errorMessage|failureType
 
-                failedRecordsRaw.forEach(record => {
+                deduplicatedFailures.forEach(record => {
                     const entityType = record.largeEntityType || 'Unknown';
                     let errorCode = 'UNKNOWN_ERROR';
                     let errorMessage = 'Unknown Error Message';
@@ -158,6 +199,29 @@ export const queries = [
                         }
                     });
                 });
+
+                // Always send zero metrics for "other" errors if not present
+                const ensureMetricExists = (errorCode, errorMessage, failureType) => {
+                    const key = `ContractCustomer|${errorCode}|${errorMessage}|${failureType}`;
+                    if (!failedRecordsGrouped.has(key)) {
+                        console.log(`📊 [CONTRACTFAILED-TODAY] Adding zero metric: ContractCustomer | ${errorCode} | ${errorMessage} | ${failureType}`);
+                        metrics.push({
+                            value: 0,
+                            labels: {
+                                entity_type: 'ContractCustomer',
+                                error_code: errorCode,
+                                error_message: errorMessage,
+                                failure_type: failureType,
+                                country: 'total',
+                                window: windowLabel
+                            }
+                        });
+                    }
+                };
+
+                // Ensure "other" metrics exist for both failure types
+                ensureMetricExists('other', 'other', 'failed');
+                ensureMetricExists('other', 'other', 'permanently_failed');
 
                 console.log(`✅ [CONTRACTFAILED-TODAY] Generated ${metrics.length} failure metrics`);
                 return metrics;

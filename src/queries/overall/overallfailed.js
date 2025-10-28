@@ -1,4 +1,3 @@
-import { generateCumulativeMetricsFromData } from "../../utils/metricsGenerator.js";
 
 export const queries = [
     {
@@ -87,9 +86,31 @@ export const queries = [
                     ];
                 }
 
+                // DEDUPLICATION: Keep only the most recent failure for each contractId
+                console.log(`🔍 [CONTRACTFAILED-OVERALL] Deduplicating failed records by contractId...`);
+                const latestFailureByContract = new Map(); // contractId -> latest failed record
+                
+                failedRecordsRaw.forEach(record => {
+                    const contractId = record.contractId;
+                    const timestamp = record._ts;
+                    
+                    if (!latestFailureByContract.has(contractId)) {
+                        latestFailureByContract.set(contractId, record);
+                    } else {
+                        const existing = latestFailureByContract.get(contractId);
+                        if (timestamp > existing._ts) {
+                            console.log(`🔄 [CONTRACTFAILED-OVERALL] Replaced older failure for contract ${contractId} (old ts: ${existing._ts}, new ts: ${timestamp})`);
+                            latestFailureByContract.set(contractId, record);
+                        }
+                    }
+                });
+                
+                const deduplicatedFailures = Array.from(latestFailureByContract.values());
+                console.log(`✅ [CONTRACTFAILED-OVERALL] After deduplication: ${failedRecordsRaw.length} records -> ${deduplicatedFailures.length} unique contracts with latest failures\n`);
+
                 const failedRecordsGrouped = new Map(); // Key: entityType|errorCode|errorMessage|failureType
 
-                failedRecordsRaw.forEach(record => {
+                deduplicatedFailures.forEach(record => {
                     const entityType = record.largeEntityType || 'Unknown';
                     let errorCode = 'UNKNOWN_ERROR';
                     let errorMessage = 'Unknown Error Message';
@@ -154,6 +175,29 @@ export const queries = [
                         }
                     });
                 });
+
+                // Always send zero metrics for "other" errors if not present
+                const ensureMetricExists = (errorCode, errorMessage, failureType) => {
+                    const key = `ContractCustomer|${errorCode}|${errorMessage}|${failureType}`;
+                    if (!failedRecordsGrouped.has(key)) {
+                        console.log(`📊 [CONTRACTFAILED-OVERALL] Adding zero metric: ContractCustomer | ${errorCode} | ${errorMessage} | ${failureType}`);
+                        metrics.push({
+                            value: 0,
+                            labels: {
+                                entity_type: 'ContractCustomer',
+                                error_code: errorCode,
+                                error_message: errorMessage,
+                                failure_type: failureType,
+                                country: 'total',
+                                window: windowLabel
+                            }
+                        });
+                    }
+                };
+
+                // Ensure "other" metrics exist for both failure types
+                ensureMetricExists('other', 'other', 'failed');
+                ensureMetricExists('other', 'other', 'permanently_failed');
 
                 console.log(`✅ [CONTRACTFAILED-OVERALL] Generated ${metrics.length} failure metrics`);
                 return metrics;
