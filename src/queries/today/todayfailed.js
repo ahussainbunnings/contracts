@@ -85,6 +85,14 @@ export const queries = [
                                 country: 'total',
                                 window: 'today'
                             }
+                        },
+                        // Total unique contracts failed metric
+                        {
+                            value: 0,
+                            labels: {
+                                country: 'total',
+                                window: 'today'
+                            }
                         }
                     ];
                 }
