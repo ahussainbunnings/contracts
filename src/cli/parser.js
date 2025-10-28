@@ -38,16 +38,25 @@ export function buildConfig(argv) {
     process.exit(0);
   }
 
-  const positionalMode = argv._[0];           // allow: "today" or "all"
-  const positionalWindow = argv._[1];         // allow: "today" or "overall"
+  const positionalMode = argv._[0];           // allow: "today", "week", "month", or "all"
+  const positionalWindow = argv._[1];         // allow: "today", "week", "month", or "overall"
+
+  // Default mode and window
+  const mode = (argv.mode || positionalMode || "today").toLowerCase();
+  let timeWindow = (argv.window || positionalWindow || mode).toLowerCase();
+  
+  // If mode is set but window is not explicitly set, use mode as window
+  if (positionalMode && !positionalWindow && !argv.window) {
+    timeWindow = mode;
+  }
 
   return {
-    mode: (argv.mode || positionalMode || "today").toLowerCase(),           // today|all
-    timeWindow: (argv.window || positionalWindow || "today").toLowerCase(), // today|overall
-    layout: (argv.layout || "sectioned").toLowerCase(),                     // sectioned|flat
-    sections: (argv.sections || "").toLowerCase(),                           // e.g. "status,contractstatus,country"
+    mode,                                                                       // today|week|month|all
+    timeWindow,                                                                 // today|week|month|overall
+    layout: (argv.layout || "sectioned").toLowerCase(),                         // sectioned|flat
+    sections: (argv.sections || "").toLowerCase(),                              // e.g. "status,contractstatus,country"
     verbose: Boolean(argv.verbose),
-    color: (argv.color || "auto").toLowerCase(),                             // auto|always|never
+    color: (argv.color || "auto").toLowerCase(),                                // auto|always|never
   };
 }
 
@@ -57,16 +66,16 @@ export function buildConfig(argv) {
  * @throws {Error} If configuration is invalid
  */
 export function validateConfig(config) {
-  const validModes = new Set(["today", "all"]);
-  const validWindows = new Set(["today", "overall"]);
+  const validModes = new Set(["today", "week", "month", "all"]);
+  const validWindows = new Set(["today", "week", "month", "overall"]);
   const validLayouts = new Set(["sectioned", "flat"]);
   const validColor = new Set(["auto", "always", "never"]);
 
   if (!validModes.has(config.mode)) {
-    throw new Error("Invalid mode. Use 'today' or 'all'.");
+    throw new Error("Invalid mode. Use 'today', 'week', 'month', or 'all'.");
   }
   if (!validWindows.has(config.timeWindow)) {
-    throw new Error("Invalid time window. Use 'today' or 'overall'.");
+    throw new Error("Invalid time window. Use 'today', 'week', 'month', or 'overall'.");
   }
   if (!validLayouts.has(config.layout)) {
     throw new Error("Invalid --layout. Use sectioned|flat.");
@@ -84,11 +93,11 @@ export function showHelp() {
     `📊 Contracts Dashboard - Restructured Query System
 
 Usage:
-  node src/index.js [today|all] [today|overall] [OPTIONS]
+  node src/index.js [today|week|month|all] [today|week|month|overall] [OPTIONS]
 
 Positional Arguments:
-  [today|all]         Query mode (default: today)
-  [today|overall]     Time window (default: today)
+  [today|week|month|all]     Query mode (default: today)
+  [today|week|month|overall] Time window (default: today)
 
 Options:
   --layout <type>     Output layout: sectioned|flat (default: sectioned)
@@ -113,7 +122,7 @@ Examples:
 export function showHelpAndExit(msg) {
   console.error(`❌ ${msg}`);
   console.error(
-    `\nUsage:\n  node src/index.js [today|all] [today|overall] [--layout sectioned|flat] [--sections key1,key2,...] [--color auto|always|never] [--verbose]\n\nExamples:\n  node src/index.js today\n  node src/index.js all overall --layout flat --color never\n  node src/index.js today today --sections status,contractstatus,country --color always\n`
+    `\nUsage:\n  node src/index.js [today|week|month|all] [today|week|month|overall] [--layout sectioned|flat] [--sections key1,key2,...] [--color auto|always|never] [--verbose]\n\nExamples:\n  node src/index.js today\n  node src/index.js week\n  node src/index.js month\n  node src/index.js all overall --layout flat --color never\n  node src/index.js today today --sections status,contractstatus,country --color always\n`
   );
   process.exit(1);
 }

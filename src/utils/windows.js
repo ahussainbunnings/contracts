@@ -9,11 +9,27 @@ const toWin = (startMel, endMel) => {
     return { startUtcMs, endUtcMs, startSec: toSecs(startUtcMs), endSec: toSecs(endUtcMs) };
 };
 
-// TODAY: Melbourne start of day -> NOW (not end of day)
+// TODAY: Melbourne start of day -> end of day
 export function todayWindow() {
     const nowMel = DateTime.now().setZone(MEL_TZ);
     const start  = nowMel.startOf("day");
-    const end    = nowMel.endOf("day"); // <- till end of day
+    const end    = nowMel.endOf("day");
+    return toWin(start, end);
+}
+
+// WEEK: Melbourne start of current week (Monday) -> end of week (Sunday)
+export function weekWindow() {
+    const nowMel = DateTime.now().setZone(MEL_TZ);
+    const start  = nowMel.startOf("week");
+    const end    = nowMel.endOf("week");
+    return toWin(start, end);
+}
+
+// MONTH: Melbourne start of current month -> end of month
+export function monthWindow() {
+    const nowMel = DateTime.now().setZone(MEL_TZ);
+    const start  = nowMel.startOf("month");
+    const end    = nowMel.endOf("month");
     return toWin(start, end);
 }
 

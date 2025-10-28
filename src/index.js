@@ -9,7 +9,7 @@ import { getCosmos } from "./connections/cosmos.js";
 import { sendMetrics } from "./connections/dynatrace.js";
 import { createQuerySummary } from "./utils/dashboardSummary.js";
 import { displaySuperCleanSummary } from "./utils/superCleanDisplay.js";
-import { allTimeWindow, logWindow, todayWindow } from "./utils/windows.js";
+import { allTimeWindow, logWindow, todayWindow, weekWindow, monthWindow } from "./utils/windows.js";
 
 // CLI utilities
 import {
@@ -48,7 +48,28 @@ const colors = initializeColors(config);
 
 /* -------------------- Environment Detection -------------------- */
 const effectiveEnv = (process.env.ENVIRONMENT || "UNKNOWN").toUpperCase();
-const windowToUse = config.timeWindow === "today" ? todayWindow() : allTimeWindow();
+
+// Select appropriate window function based on config
+let windowToUse;
+switch (config.timeWindow) {
+  case "today":
+    windowToUse = todayWindow();
+    break;
+  case "week":
+    windowToUse = weekWindow();
+    break;
+  case "month":
+    windowToUse = monthWindow();
+    break;
+  case "overall":
+    windowToUse = allTimeWindow();
+    break;
+  default:
+    windowToUse = todayWindow();
+}
+
+// Add label to window for query modules
+windowToUse.label = config.timeWindow;
 
 /* -------------------- Startup Banner -------------------- */
 console.log(colors.bold(`🚀 DASHBOARD STARTING - RESTRUCTURED QUERY SYSTEM`));
@@ -65,6 +86,10 @@ console.log(
 
 if (config.mode === "all" || config.timeWindow === "overall") {
   console.log(`📅 Using ${colors.bold("ALL-TIME")} window (no time filter)`);
+} else if (config.timeWindow === "week") {
+  console.log(`📅 Using ${colors.bold("WEEK")} window (Melbourne timezone)`);
+} else if (config.timeWindow === "month") {
+  console.log(`📅 Using ${colors.bold("MONTH")} window (Melbourne timezone)`);
 } else {
   console.log(`📅 Using ${colors.bold("TODAY")} window (Melbourne timezone)`);
 }
@@ -79,7 +104,7 @@ async function main() {
 
   // Queries
   console.log(`🔍 Loading ${bold(config.mode.toUpperCase())} query modules...`);
-  const queries = await loadQueryFiles(config.mode, config.timeWindow);
+  const queries = await loadQueryFiles(config.mode, config.timeWindow, colors);
 
   console.log(`📊 LOADED ${bold(String(queries.length))} QUERY MODULES:`);
   queries.forEach((q, i) => console.log(`   ${gray(String(i + 1).padStart(2, " "))}. ${bold(q.name)}`));
