@@ -223,6 +223,17 @@ export const queries = [
                 ensureMetricExists('other', 'other', 'failed');
                 ensureMetricExists('other', 'other', 'permanently_failed');
 
+                // Add total unique contracts failed metric (independent of error types)
+                const totalUniqueContracts = deduplicatedFailures.length;
+                console.log(`📊 [CONTRACTFAILED-TODAY] Adding total unique contracts failed metric: ${totalUniqueContracts} unique contracts`);
+                metrics.push({
+                    value: totalUniqueContracts,
+                    labels: {
+                        country: 'total',
+                        window: windowLabel
+                    }
+                });
+
                 console.log(`✅ [CONTRACTFAILED-TODAY] Generated ${metrics.length} failure metrics`);
                 return metrics;
 
