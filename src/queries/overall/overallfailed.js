@@ -203,7 +203,9 @@ export const queries = [
                     }
                 };
 
-                // Ensure "other" metrics exist for both failure types
+                // Ensure all metric patterns exist for both failure types
+                ensureMetricExists('INVALID_FIELD', 'Account_doesnot_exists', 'failed');
+                ensureMetricExists('INVALID_FIELD', 'Account_doesnot_exists', 'permanently_failed');
                 ensureMetricExists('other', 'other', 'failed');
                 ensureMetricExists('other', 'other', 'permanently_failed');
 
