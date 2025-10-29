@@ -9,7 +9,7 @@ import { getCosmos } from "./connections/cosmos.js";
 import { sendMetrics } from "./connections/dynatrace.js";
 import { createQuerySummary } from "./utils/dashboardSummary.js";
 import { displaySuperCleanSummary } from "./utils/superCleanDisplay.js";
-import { allTimeWindow, logWindow, todayWindow, weekWindow, monthWindow } from "./utils/windows.js";
+import { allTimeWindow, logWindow, monthWindow, todayWindow, weekWindow } from "./utils/windows.js";
 
 // CLI utilities
 import {
