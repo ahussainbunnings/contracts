@@ -37,7 +37,7 @@ export const queries = [
 
             if (!uploadDocs || uploadDocs.length === 0) {
                 console.log(`⚠️ [CONTRACTRECEIVED-OVERALL] No upload documents found, returning zero metrics`);
-                return generateCumulativeMetricsFromData(new Map(), "overall");
+                return generateCumulativeMetricsFromData(new Map(), win.label || "overall");
             }
 
             // Step 2: Get batchIds to lookup entity data
@@ -160,7 +160,7 @@ export const queries = [
             for (const [key, data] of metricsData) {
                 finalAgg.set(key, data.count);
             }
-            return generateCumulativeMetricsFromData(finalAgg, "overall");
+            return generateCumulativeMetricsFromData(finalAgg, win.label || "overall");
         }
     },
     {
@@ -194,7 +194,7 @@ export const queries = [
 
             if (!uniqueContractIds || uniqueContractIds.length === 0) {
                 console.log(`⚠️ [CONTRACTRECEIVED-SUBDOMAINS-OVERALL] No contractIds found, returning zero metrics`);
-                return generateCumulativeMetricsFromData(new Map(), "overall");
+                return generateCumulativeMetricsFromData(new Map(), win.label || "overall");
             }
 
             // Step 2: Process unique contract data and generate metrics
@@ -234,7 +234,7 @@ export const queries = [
             for (const [key, data] of metricsData) {
                 finalAgg.set(key, data.count);
             }
-            return generateCumulativeMetricsFromData(finalAgg, "overall");
+            return generateCumulativeMetricsFromData(finalAgg, win.label || "overall");
         }
     }
 ];

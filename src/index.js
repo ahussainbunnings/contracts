@@ -112,8 +112,6 @@ async function main() {
   let totalMetricsSent = 0;
   const queryResults = [];
 
-  const envLower = effectiveEnv.toLowerCase();
-
   for (const mod of queries) {
     try {
       // rolling summary before each module
@@ -127,15 +125,12 @@ async function main() {
       if (result && result.length > 0) {
         console.log(green(`✅ ${mod.name}: ${result.length} series`));
 
-        // Build payload lines exactly as before (preserve env + any labels your modules set)
+        // Build payload lines without env label
         const timestamp = Date.now();
         const cumulativePayloadLines = result.map((r) => {
           const labelsCore = Object.entries(r.labels || {})
             .filter(([, v]) => v !== undefined)
             .map(([k, v]) => `${k}=${v}`);
-
-          // ensure env is present
-          if (!labelsCore.find((l) => l.startsWith("env="))) labelsCore.push(`env=${envLower}`);
 
           return `${mod.metricBase},${labelsCore.join(",")} gauge,${r.value} ${timestamp}`;
         });
@@ -154,7 +149,6 @@ async function main() {
           printSectionedResults({
             mod,
             results: result, // use structured results for grouping
-            envLower,
             timestamp,
             sectionKeys,
             colors,

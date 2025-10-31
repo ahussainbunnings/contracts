@@ -36,7 +36,7 @@ export const queries = [
 
                 if (result.resources.length === 0) {
                     console.log(`📊 [CONTRACTFAILED-TODAY] No failed records found for today, returning zero metrics`);
-                    // Return zero metrics for both failure types and both error patterns
+                    // Return zero metrics for both failure types and all error patterns
                     return [
                         // Account_doesnot_exists pattern - failed
                         {
@@ -62,7 +62,31 @@ export const queries = [
                                 window: 'today'
                             }
                         },
-                        // Other errors pattern - failed
+                        // Flow trigger error pattern - failed
+                        {
+                            value: 0,
+                            labels: {
+                                entity_type: 'Contract',
+                                error_code: 'CANNOT_EXECUTE_FLOW_TRIGGER',
+                                error_message: 'Flow_trigger_error',
+                                failure_type: 'failed',
+                                country: 'total',
+                                window: 'today'
+                            }
+                        },
+                        // Flow trigger error pattern - permanently_failed
+                        {
+                            value: 0,
+                            labels: {
+                                entity_type: 'Contract',
+                                error_code: 'CANNOT_EXECUTE_FLOW_TRIGGER',
+                                error_message: 'Flow_trigger_error',
+                                failure_type: 'permanently_failed',
+                                country: 'total',
+                                window: 'today'
+                            }
+                        },
+                        // Other errors pattern - ContractCustomer failed
                         {
                             value: 0,
                             labels: {
@@ -74,11 +98,35 @@ export const queries = [
                                 window: 'today'
                             }
                         },
-                        // Other errors pattern - permanently_failed
+                        // Other errors pattern - ContractCustomer permanently_failed
                         {
                             value: 0,
                             labels: {
                                 entity_type: 'ContractCustomer',
+                                error_code: 'other',
+                                error_message: 'other',
+                                failure_type: 'permanently_failed',
+                                country: 'total',
+                                window: 'today'
+                            }
+                        },
+                        // Other errors pattern - Contract failed
+                        {
+                            value: 0,
+                            labels: {
+                                entity_type: 'Contract',
+                                error_code: 'other',
+                                error_message: 'other',
+                                failure_type: 'failed',
+                                country: 'total',
+                                window: 'today'
+                            }
+                        },
+                        // Other errors pattern - Contract permanently_failed
+                        {
+                            value: 0,
+                            labels: {
+                                entity_type: 'Contract',
                                 error_code: 'other',
                                 error_message: 'other',
                                 failure_type: 'permanently_failed',
@@ -163,7 +211,12 @@ export const queries = [
                         // Special handling for Account_doesnot_exists
                         if (errorCode === 'INVALID_FIELD' && errorMessage.includes('Account_Identification__c in entity Account')) {
                             errorMessage = 'Account_doesnot_exists';
-                        } else {
+                        }
+                        // Special handling for Flow trigger errors
+                        else if (errorCode === 'CANNOT_EXECUTE_FLOW_TRIGGER') {
+                            errorMessage = 'Flow_trigger_error';
+                        }
+                        else {
                             // Normalize other errors to 'other'
                             errorCode = 'other';
                             errorMessage = 'other';
@@ -209,14 +262,14 @@ export const queries = [
                 });
 
                 // Always send zero metrics for "other" errors if not present
-                const ensureMetricExists = (errorCode, errorMessage, failureType) => {
-                    const key = `ContractCustomer|${errorCode}|${errorMessage}|${failureType}`;
+                const ensureMetricExists = (entityType, errorCode, errorMessage, failureType) => {
+                    const key = `${entityType}|${errorCode}|${errorMessage}|${failureType}`;
                     if (!failedRecordsGrouped.has(key)) {
-                        console.log(`📊 [CONTRACTFAILED-TODAY] Adding zero metric: ContractCustomer | ${errorCode} | ${errorMessage} | ${failureType}`);
+                        console.log(`📊 [CONTRACTFAILED-TODAY] Adding zero metric: ${entityType} | ${errorCode} | ${errorMessage} | ${failureType}`);
                         metrics.push({
                             value: 0,
                             labels: {
-                                entity_type: 'ContractCustomer',
+                                entity_type: entityType,
                                 error_code: errorCode,
                                 error_message: errorMessage,
                                 failure_type: failureType,
@@ -228,10 +281,21 @@ export const queries = [
                 };
 
                 // Ensure all metric patterns exist for both failure types
-                ensureMetricExists('INVALID_FIELD', 'Account_doesnot_exists', 'failed');
-                ensureMetricExists('INVALID_FIELD', 'Account_doesnot_exists', 'permanently_failed');
-                ensureMetricExists('other', 'other', 'failed');
-                ensureMetricExists('other', 'other', 'permanently_failed');
+                // Account_doesnot_exists pattern
+                ensureMetricExists('ContractCustomer', 'INVALID_FIELD', 'Account_doesnot_exists', 'failed');
+                ensureMetricExists('ContractCustomer', 'INVALID_FIELD', 'Account_doesnot_exists', 'permanently_failed');
+                
+                // Flow trigger error pattern
+                ensureMetricExists('Contract', 'CANNOT_EXECUTE_FLOW_TRIGGER', 'Flow_trigger_error', 'failed');
+                ensureMetricExists('Contract', 'CANNOT_EXECUTE_FLOW_TRIGGER', 'Flow_trigger_error', 'permanently_failed');
+                
+                // Other errors pattern - ContractCustomer
+                ensureMetricExists('ContractCustomer', 'other', 'other', 'failed');
+                ensureMetricExists('ContractCustomer', 'other', 'other', 'permanently_failed');
+                
+                // Other errors pattern - Contract
+                ensureMetricExists('Contract', 'other', 'other', 'failed');
+                ensureMetricExists('Contract', 'other', 'other', 'permanently_failed');
 
                 // Add total unique contracts failed metric (independent of error types)
                 const totalUniqueContracts = deduplicatedFailures.length;

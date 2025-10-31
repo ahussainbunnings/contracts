@@ -5,15 +5,12 @@
   "private": true,
   "scripts": {
     "start": "node ./src/index.js",
-    "start:sit":  "dotenv -e .env.sit  -- node ./src/index.js today",
-    "start:uat":  "dotenv -e .env.uat  -- node ./src/index.js today",
-    "start:prod": "dotenv -e .env.prod -- node ./src/index.js today",
-    "all:sit":    "dotenv -e .env.sit  -- node ./src/index.js all",
-    "all:uat":    "dotenv -e .env.uat  -- node ./src/index.js all",
-    "all:prod":   "dotenv -e .env.prod -- node ./src/index.js all",
-    "debug:sit":  "dotenv -e .env.sit  -- node ./src/contractdetails.js",
-    "debug:uat":  "dotenv -e .env.uat  -- node ./src/contractdetails.js",
-    "debug:prod": "dotenv -e .env.prod -- node ./src/contractdetails.js"
+    "today": "node ./src/index.js all today",
+    "week": "node ./src/index.js all week",
+    "month": "node ./src/index.js all month",
+    "overall": "node ./src/index.js all overall",
+    "suite": "npm run today && npm run week && npm run month && npm run overall",
+    "debug": "node ./src/contractdetails.js"
   },
   "dependencies": {
     "@azure/cosmos": "^4.5.1",

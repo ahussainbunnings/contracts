@@ -100,16 +100,14 @@ export function groupBy(items, key) {
  * Build a Dynatrace metric line for display
  * @param {object} mod - Module with metricBase
  * @param {object} result - Result with labels and value
- * @param {string} envLower - Environment in lowercase
  * @param {number} timestamp - Timestamp
  * @param {object} colors - Color helper functions
  * @returns {string} Formatted metric line
  */
-export function buildDynatraceLine(mod, result, envLower, timestamp, colors) {
+export function buildDynatraceLine(mod, result, timestamp, colors) {
   const labelsStr = Object.entries(result.labels || {})
     .filter(([, v]) => v !== undefined)
     .map(([k, v]) => `${k}=${v}`)
-    .concat([`env=${envLower}`]) // make sure env is on every line
     .join(",");
   const metric = `${mod.metricBase},${labelsStr} gauge,${result.value} ${timestamp}`;
   return colors.colorEnabled ? colors.gray(metric) : metric;
@@ -119,13 +117,13 @@ export function buildDynatraceLine(mod, result, envLower, timestamp, colors) {
  * Recursively print results grouped by section keys
  * @param {object} options - Print options
  */
-export function printSectionedResults({ mod, results, envLower, timestamp, sectionKeys, colors = defaultColors, depth = 0 }) {
+export function printSectionedResults({ mod, results, timestamp, sectionKeys, colors = defaultColors, depth = 0 }) {
   if (!sectionKeys.length) {
     // Leaf: print every metric line
     let i = 1;
     for (const r of results) {
       const idx = colors.gray(String(i++).padStart(3, " "));
-      console.log(`   ${idx}. ${buildDynatraceLine(mod, r, envLower, timestamp, colors)}`);
+      console.log(`   ${idx}. ${buildDynatraceLine(mod, r, timestamp, colors)}`);
     }
     return;
   }
@@ -146,7 +144,6 @@ export function printSectionedResults({ mod, results, envLower, timestamp, secti
     printSectionedResults({ 
       mod, 
       results: bucket, 
-      envLower, 
       timestamp, 
       sectionKeys: rest, 
       colors,

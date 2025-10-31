@@ -14,8 +14,6 @@ export async function loadQueryFiles(mode, timeWindow, colors) {
   const queryFiles = [];
   
   try {
-    const folder = mode === "all" ? "overall" : timeWindow;
-
     const tryLoad = async (path) => {
       try {
         const mod = await import(path);
@@ -29,6 +27,12 @@ export async function loadQueryFiles(mode, timeWindow, colors) {
       }
     };
 
+    // Always use the specified timeWindow folder
+    // mode "all" means load all query types (received, processed, failed) from that folder
+    const folder = timeWindow;
+    
+    console.log(colors.gray(`📁 Loading queries from folder: ${folder}`));
+    
     await tryLoad(`../queries/${folder}/${folder}received.js`);
     await tryLoad(`../queries/${folder}/${folder}processed.js`);
     await tryLoad(`../queries/${folder}/${folder}failed.js`);

@@ -13,12 +13,10 @@ const allStatuses = [
 const allProcessedStatuses = [
     "inprogress",
     "completed",
-    "partial_complete",
     "failed",
     "permanentlyfailed",
     "inprogress_unique",
     "completed_unique",
-    "partial_complete_unique",
     "failed_unique",
     "permanentlyfailed_unique"
 ];
