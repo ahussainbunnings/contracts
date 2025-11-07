@@ -104,6 +104,49 @@ export const queries = [
             
             console.log(`✅ [CONTRACTPROCESSED-OVERALL] Found ${latestContractByContractId.size} unique contracts with their latest uploads`);
 
+            // Step 4.5: Query integration status for all unique contracts to exclude those with errors
+            const contractIds = Array.from(latestContractByContractId.keys());
+            const integrationStatusMap = new Map(); // contractId -> integrationStatus
+            
+            if (contractIds.length > 0) {
+                console.log(`🔍 [CONTRACTPROCESSED-OVERALL] Checking integration status for ${contractIds.length} contracts...`);
+                
+                // Process in chunks to avoid query size limits
+                const chunkSize = 50;
+                for (let i = 0; i < contractIds.length; i += chunkSize) {
+                    const chunk = contractIds.slice(i, i + chunkSize);
+                    
+                    const parameters = [];
+                    const placeholders = [];
+                    for (let j = 0; j < chunk.length; j++) {
+                        placeholders.push(`@contractId${j}`);
+                        parameters.push({ name: `@contractId${j}`, value: chunk[j] });
+                    }
+                    
+                    const integrationQuery = {
+                        query: `
+                            SELECT c.contractId, c.integrationStatus
+                            FROM c
+                            WHERE c.documentType = "ContractCosmosDataModel"
+                              AND c.contractId IN (${placeholders.join(',')})
+                            ORDER BY c._ts DESC
+                        `,
+                        parameters: parameters
+                    };
+                    
+                    const { resources: integrationResults } = await statusC.items.query(integrationQuery).fetchAll();
+                    
+                    // Keep only the most recent integration status for each contract
+                    for (const result of (integrationResults || [])) {
+                        if (result.contractId && !integrationStatusMap.has(result.contractId)) {
+                            integrationStatusMap.set(result.contractId, result.integrationStatus || 'Unknown');
+                        }
+                    }
+                }
+                
+                console.log(`✅ [CONTRACTPROCESSED-OVERALL] Found integration status for ${integrationStatusMap.size} contracts`);
+            }
+
             // Step 5: Process only the latest contracts and generate metrics
             const metricsData = new Map(); // key -> { count, uniqueContracts }
             
@@ -117,7 +160,17 @@ export const queries = [
                 const status = mapEntityStatusToReadable(contractStatus);
                 const country = countryCode?.toLowerCase() || 'unknown';
                 
-                console.log(`📊 [CONTRACTPROCESSED-OVERALL] Processing latest upload for contract ${contractId}: batchId=${contractRow.batchId} -> status=${status}, country=${country}, timestamp=${contractRow.timestamp}`);
+                // Check integration status - exclude contracts with errors from "completed" count
+                const integrationStatus = integrationStatusMap.get(contractId) || 'Unknown';
+                const hasErrors = integrationStatus === 'Completed With Errors';
+                
+                console.log(`📊 [CONTRACTPROCESSED-OVERALL] Processing latest upload for contract ${contractId}: batchId=${contractRow.batchId} -> status=${status}, country=${country}, timestamp=${contractRow.timestamp}, integrationStatus=${integrationStatus}`);
+                
+                // Skip contracts with "Completed With Errors" - they should only be counted in integration status metrics
+                if (hasErrors) {
+                    console.log(`⚠️ [CONTRACTPROCESSED-OVERALL] Skipping contract ${contractId} - has integration errors (will be counted in integration status metrics only)`);
+                    continue;
+                }
                 
                 // Create keys for different combinations
                 const keys = [

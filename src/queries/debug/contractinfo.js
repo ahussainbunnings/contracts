@@ -1,5 +1,4 @@
 // src/queries/debug/contractinfo.js
-import { generateCumulativeMetricsFromData } from "../../utils/metricsGenerator.js";
 
 export const name = "contractdetails_contractinfo";
 export const metricBase = "custom.dashboard.contractdetails.contractinfo";
@@ -68,12 +67,46 @@ export async function run(containers, options = {}) {
         };
 
         const contractResult = await containers.statusContainer.items.query(contractQuery).fetchAll();
+
+        // Query for ContractCosmosDataModel documents to get integrationStatus
+        // Try multiple approaches to find the integration status
+        const integrationQuery = {
+            query: `
+                SELECT c.id, c.integrationStatus, c.integrationComment, c.contractStatus, c._ts
+                FROM c 
+                WHERE c.documentType = "ContractCosmosDataModel"
+                AND ${contractId ? '(c.id = @contractId OR c.contractId = @contractId OR CONTAINS(TOSTRING(c.id), @contractId))' : 'c.contractBatchId = @batchId'}
+                ORDER BY c._ts DESC
+            `,
+            parameters: contractId 
+                ? [{ name: "@contractId", value: String(contractId) }]
+                : [{ name: "@batchId", value: batchId }]
+        };
+
+        const integrationResult = await containers.statusContainer.items.query(integrationQuery).fetchAll();
+        
+        // Create a map of contract IDs to integration status
+        const integrationStatusMap = new Map();
+        integrationResult.resources.forEach(item => {
+            const doc = item.c || item;
+            integrationStatusMap.set(doc.id, {
+                integrationStatus: doc.integrationStatus || 'Unknown',
+                integrationComment: doc.integrationComment || null,
+                contractStatus: doc.contractStatus || 'Unknown',
+                timestamp: doc._ts
+            });
+        });
+        
+        console.log(`✅ [CONTRACTDETAILS-CONTRACTINFO] Found ${integrationResult.resources.length} integration status records`);
         
         console.log(`✅ [CONTRACTDETAILS-CONTRACTINFO] Found ${contractResult.resources.length} contract records`);
 
         // Extract contract processing data with correct field names
         const processedContracts = contractResult.resources.map(item => {
             const contract = item.c || item; // Handle both formats
+            // Look up integration status for this contract
+            const integrationInfo = integrationStatusMap.get(contract.id) || integrationStatusMap.get(contractId) || {};
+            
             return {
                 id: contract.id,
                 batchId: contract.batchCorrelationId,
@@ -85,6 +118,8 @@ export async function run(containers, options = {}) {
                 largeEntityType: contract.largeEntityType || 'Unknown',
                 errorStatusCode: contract.salesforceResponse?.errors?.[0]?.statusCode || 'N/A',
                 errorMessage: contract.salesforceResponse?.errors?.[0]?.message || 'N/A',
+                integrationStatus: integrationInfo.integrationStatus || 'Unknown',
+                integrationComment: integrationInfo.integrationComment || null,
                 timestamp: contract._ts
             };
         });
@@ -126,8 +161,8 @@ export async function run(containers, options = {}) {
         // Summary by Contract
         console.log(`\n📊 SUMMARY BY CONTRACT:`);
         console.log(`${'-'.repeat(220)}`);
-        console.log(`| Contract ID  | Country  | Status     | PartitionKeys   | Total Docs   | Contract | ContractLine | ContractCustomer | Processing Status | Attempts |`);
-        console.log(`${'-'.repeat(140)}`);
+        console.log(`| Contract ID  | Country  | Status     | Integration Status         | PartitionKeys   | Total Docs   | Contract | ContractLine | ContractCustomer | Processing Status | Attempts |`);
+        console.log(`${'-'.repeat(220)}`);
 
         for (const [contractId, group] of contractGroups) {
             // Count subdomains
@@ -151,12 +186,13 @@ export async function run(containers, options = {}) {
             const latestEntity = group.entities.sort((a, b) => b.timestamp - a.timestamp)[0];
             const contractStatus = latestEntity?.contractStatus || 'Unknown';
             
-            // Get processing status
+            // Get processing status and integration status
             const latestContract = group.contracts.sort((a, b) => b.timestamp - a.timestamp)[0];
             const processingStatus = latestContract?.status || 'N/A';
             const attempts = latestContract?.attempts || 'N/A';
+            const integrationStatus = latestContract?.integrationStatus || 'Unknown';
 
-            console.log(`| ${String(contractId).padEnd(12)} | ${String(group.country).padEnd(8)} | ${String(contractStatus).padEnd(11)} | ${String(partitionKeys.length).padEnd(15)} | ${String(group.entities.length).padEnd(12)} | ${String(subDomainCounts.Contract).padEnd(8)} | ${String(subDomainCounts.ContractLine).padEnd(12)} | ${String(subDomainCounts.ContractCustomer).padEnd(16)} | ${String(processingStatus).padEnd(18)} | ${String(attempts).padEnd(8)} |`);
+            console.log(`| ${String(contractId).padEnd(12)} | ${String(group.country).padEnd(8)} | ${String(contractStatus).padEnd(11)} | ${String(integrationStatus).padEnd(26)} | ${String(partitionKeys.length).padEnd(15)} | ${String(group.entities.length).padEnd(12)} | ${String(subDomainCounts.Contract).padEnd(8)} | ${String(subDomainCounts.ContractLine).padEnd(12)} | ${String(subDomainCounts.ContractCustomer).padEnd(16)} | ${String(processingStatus).padEnd(18)} | ${String(attempts).padEnd(8)} |`);
         }
         console.log(`${'-'.repeat(140)}`);
 
@@ -205,26 +241,115 @@ export async function run(containers, options = {}) {
         // Processing Details
         if (processedContracts.length > 0) {
             console.log(`\n📊 PROCESSING DETAILS:`);
-            console.log(`${'-'.repeat(140)}`);
-            console.log(`| Contract ID  | Batch ID                                        | Status      | Attempts | Emp Retry | Large Entity Type | Error Code | Error Message | Salesforce Result | Timestamp                |`);
-            console.log(`${'-'.repeat(140)}`);
+            console.log(`${'-'.repeat(220)}`);
+            console.log(`| Contract ID  | Batch ID                                        | Status      | Integration Status         | Attempts | Emp Retry | Large Entity Type | Error Code | Error Message        | Salesforce Result | Timestamp                |`);
+            console.log(`${'-'.repeat(220)}`);
 
             for (const [contractId, group] of contractGroups) {
                 group.contracts.forEach(contract => {
                     const timestamp = new Date(contract.timestamp * 1000).toISOString();
                     const salesforceResult = contract.salesforceResponse?.result || 'N/A';
-                    console.log(`| ${String(contractId).padEnd(12)} | ${String(contract.id).padEnd(48)} | ${String(contract.status || 'N/A').padEnd(11)} | ${String(contract.attempts).padEnd(8)} | ${String(contract.empRetryCount).padEnd(9)} | ${String(contract.largeEntityType).padEnd(16)} | ${String(contract.errorStatusCode).padEnd(10)} | ${String(contract.errorMessage).padEnd(20)} | ${String(salesforceResult).padEnd(17)} | ${timestamp.padEnd(24)} |`);
+                    const errorCode = contract.errorStatusCode || 'N/A';
+                    const errorMsg = (contract.errorMessage || 'N/A').substring(0, 20);
+                    const largeEntity = contract.largeEntityType || 'N/A';
+                    const integrationStatus = contract.integrationStatus || 'Unknown';
+                    console.log(`| ${String(contractId).padEnd(12)} | ${String(contract.id).padEnd(48)} | ${String(contract.status || 'N/A').padEnd(11)} | ${String(integrationStatus).padEnd(26)} | ${String(contract.attempts).padEnd(8)} | ${String(contract.empRetryCount).padEnd(9)} | ${String(largeEntity).padEnd(17)} | ${String(errorCode).padEnd(10)} | ${String(errorMsg).padEnd(20)} | ${String(salesforceResult).padEnd(17)} | ${timestamp.padEnd(24)} |`);
+                    
+                    // Show integration comment if there are errors
+                    if (contract.integrationComment && integrationStatus === 'Completed With Errors') {
+                        console.log(`  ⚠️  Integration Error: ${contract.integrationComment}`);
+                    }
                 });
             }
-            console.log(`${'-'.repeat(140)}`);
+            console.log(`${'-'.repeat(220)}`);
         }
 
         // Summary
         console.log(`\n📊 SUMMARY:`);
         console.log(`${'-'.repeat(60)}`);
         console.log(`Total Contract Groups: ${contractGroups.size}`);
-        console.log(`Total Entities: ${processedEntities.length}`);
-        console.log(`Total Contract Records: ${processedContracts.length}`);
+        console.log(`Total Batches: ${processedContracts.length}`);
+        
+        // Integration Status Summary
+        const integrationStatusCounts = {
+            'Completed': 0,
+            'Completed With Errors': 0,
+            'Loading': 0,
+            'Unknown': 0
+        };
+        
+        for (const [contractId, group] of contractGroups) {
+            const latestContract = group.contracts.sort((a, b) => b.timestamp - a.timestamp)[0];
+            const status = latestContract?.integrationStatus || 'Unknown';
+            if (integrationStatusCounts.hasOwnProperty(status)) {
+                integrationStatusCounts[status]++;
+            } else {
+                integrationStatusCounts['Unknown']++;
+            }
+        }
+        
+        console.log(`\n📊 Integration Status Summary:`);
+        console.log(`   - Completed: ${integrationStatusCounts['Completed']}`);
+        console.log(`   - Completed With Errors: ${integrationStatusCounts['Completed With Errors']}`);
+        console.log(`   - Loading: ${integrationStatusCounts['Loading']}`);
+        console.log(`   - Unknown: ${integrationStatusCounts['Unknown']}`);
+        
+        // To get unique counts, we need to query the full documents and extract entity IDs
+        const fullEntitiesQuery = {
+            query: `
+                SELECT c
+                FROM c 
+                WHERE ${contractId ? 'c.header.metadata.contractId = @contractId' : 'c.id = @batchId'}
+            `,
+            parameters: contractId 
+                ? [{ name: "@contractId", value: contractId }]
+                : [{ name: "@batchId", value: batchId }]
+        };
+
+        const fullEntitiesResult = await containers.entitiesContainer.items.query(fullEntitiesQuery).fetchAll();
+        
+        // Count unique entities using their actual entity IDs from the document
+        const uniqueContracts = new Set();
+        const uniqueCustomers = new Set();
+        const uniqueLines = new Set();
+        
+        fullEntitiesResult.resources.forEach(item => {
+            const entity = item.c || item;
+            const subDomain = entity.header?.subDomain;
+            
+            if (subDomain === 'Contract') {
+                // Use contractId as the unique identifier for Contract
+                uniqueContracts.add(entity.header?.contract?.contractId || entity.header?.metadata?.contractId);
+            } else if (subDomain === 'ContractCustomer') {
+                // Use customerId as the unique identifier for ContractCustomer
+                uniqueCustomers.add(entity.header?.contractCustomer?.customerId);
+            } else if (subDomain === 'ContractLine') {
+                // Use contractLineId as the unique identifier for ContractLine
+                uniqueLines.add(entity.header?.contractLine?.contractLineId);
+            }
+        });
+        
+        console.log(`\n� Summary:`);
+        console.log(`   - Contract: ${uniqueContracts.size}`);
+        console.log(`   - Customers: ${uniqueCustomers.size}`);
+        console.log(`   - Lines: ${uniqueLines.size}`);
+        
+        // Show per-batch breakdown (using partitionKey as batchId)
+        const batchGroups = {};
+        processedEntities.forEach(entity => {
+            const batch = entity.partitionKey;
+            if (!batchGroups[batch]) {
+                batchGroups[batch] = { Contract: 0, ContractCustomer: 0, ContractLine: 0 };
+            }
+            batchGroups[batch][entity.subDomain]++;
+        });
+        
+        const batchCount = Object.keys(batchGroups).length;
+        console.log(`\n📦 Batches (${batchCount} total):`);
+        Object.entries(batchGroups).forEach(([batch, counts]) => {
+            const total = counts.Contract + counts.ContractCustomer + counts.ContractLine;
+            console.log(`   ${batch}: Contract: ${counts.Contract}, Customers: ${counts.ContractCustomer}, Lines: ${counts.ContractLine} (Total: ${total})`);
+        });
 
         return [];
 

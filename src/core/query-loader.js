@@ -36,6 +36,7 @@ export async function loadQueryFiles(mode, timeWindow, colors) {
     await tryLoad(`../queries/${folder}/${folder}received.js`);
     await tryLoad(`../queries/${folder}/${folder}processed.js`);
     await tryLoad(`../queries/${folder}/${folder}failed.js`);
+    await tryLoad(`../queries/${folder}/${folder}integrationstatus.js`);
 
     return queryFiles;
   } catch (error) {

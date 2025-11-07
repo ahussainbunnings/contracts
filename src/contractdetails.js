@@ -1,24 +1,29 @@
 // src/contractdetails.js
-import { getCosmos } from "./connections/cosmos.js";
+import dotenv from "dotenv";
+
+// Load environment variables from .env file
+dotenv.config();
+
 import { DateTime } from "luxon";
 import readline from 'readline';
+import { getCosmos } from "./connections/cosmos.js";
 
 // Validate environment variables
 function validateEnvironment() {
-    const required = ['COSMOS_DATABASE', 'CONTRACT_CONTAINER', 'CONTRACT_ENTITIES_CONTAINER'];
-    const missing = required.filter(key => !process.env[key]);
-    
-    if (missing.length > 0) {
-        console.error(`❌ Missing required environment variables: ${missing.join(', ')}`);
-        process.exit(1);
+    // Set defaults for required variables if not present
+    if (!process.env.SERVICE_NAME) {
+        process.env.SERVICE_NAME = 'dashboard';
+    }
+    if (!process.env.ENVIRONMENT) {
+        process.env.ENVIRONMENT = 'SIT';
     }
     
-    console.log("✅ Required environment variables are set.");
+    console.log("✅ Environment variables set (using defaults if needed).");
     
-    const optional = ['COSMOS_ENDPOINT', 'COSMOS_KEY'];
+    const optional = ['COSMOS_ENDPOINT', 'COSMOS_KEY', 'COSMOS_DATABASE', 'CONTRACT_CONTAINER', 'CONTRACT_ENTITIES_CONTAINER'];
     const notSet = optional.filter(key => !process.env[key]);
     if (notSet.length > 0) {
-        console.log(`ℹ️ Optional var not set: ${notSet.join(', ')}`);
+        console.log(`ℹ️ Optional environment variables (will use Key Vault): ${notSet.join(', ')}`);
     }
 }
 
@@ -37,7 +42,7 @@ async function main() {
     // Get Cosmos DB connection using Key Vault
     console.log("🔗 [COSMOS] Initializing Cosmos DB connection...");
     const { containers } = await getCosmos();
-    console.log(`🔗 Cosmos: db=${process.env.COSMOS_DATABASE}, statusContainer=${process.env.CONTRACT_CONTAINER}, entitiesContainer=${process.env.CONTRACT_ENTITIES_CONTAINER}`);
+    console.log(`✅ [COSMOS] Successfully connected to Cosmos DB`);
 
     const args = process.argv.slice(2);
     const containersFixed = {

@@ -95,15 +95,44 @@ export async function run(containers, options = {}) {
                 contractGroups.get(contractId).entities.push(entity);
             });
 
+            // Query for integration status for all found contracts
+            const contractIds = [...contractGroups.keys()];
+            const integrationStatusMap = new Map();
+            
+            if (contractIds.length > 0) {
+                // Query in batches if needed
+                for (let i = 0; i < contractIds.length; i += 100) {
+                    const batch = contractIds.slice(i, i + 100);
+                    const integrationQuery = {
+                        query: `
+                            SELECT c.id, c.integrationStatus, c.integrationComment, c.contractStatus
+                            FROM c 
+                            WHERE c.documentType = "ContractCosmosDataModel"
+                            AND c.id IN (${batch.map((_, idx) => `@id${idx}`).join(',')})
+                        `,
+                        parameters: batch.map((id, idx) => ({ name: `@id${idx}`, value: String(id) }))
+                    };
+
+                    const integrationResult = await containers.statusContainer.items.query(integrationQuery).fetchAll();
+                    integrationResult.resources.forEach(item => {
+                        const doc = item.c || item;
+                        integrationStatusMap.set(doc.id, {
+                            integrationStatus: doc.integrationStatus || 'Unknown',
+                            integrationComment: doc.integrationComment || null
+                        });
+                    });
+                }
+            }
+
             console.log(`\n${'='.repeat(120)}`);
             console.log(`🔍 SEARCH RESULTS`);
             console.log(`${'='.repeat(120)}`);
 
             // Summary by Contract
             console.log(`\n📊 SUMMARY BY CONTRACT:`);
-            console.log(`${'-'.repeat(120)}`);
-            console.log(`| Contract ID  | Country  | Status     | PartitionKeys   | Total Docs   | Contract | ContractLine | ContractCustomer |`);
-            console.log(`${'-'.repeat(120)}`);
+            console.log(`${'-'.repeat(180)}`);
+            console.log(`| Contract ID  | Country  | Status     | Integration Status         | PartitionKeys   | Total Docs   | Contract | ContractLine | ContractCustomer |`);
+            console.log(`${'-'.repeat(180)}`);
 
             for (const [contractId, group] of contractGroups) {
                 // Count subdomains
@@ -126,10 +155,19 @@ export async function run(containers, options = {}) {
                 // Get latest contract status
                 const latestEntity = group.entities.sort((a, b) => b.timestamp - a.timestamp)[0];
                 const contractStatus = latestEntity?.contractStatus || 'Unknown';
+                
+                // Get integration status
+                const integrationInfo = integrationStatusMap.get(String(contractId)) || {};
+                const integrationStatus = integrationInfo.integrationStatus || 'Unknown';
 
-                console.log(`| ${String(contractId).padEnd(12)} | ${String(group.country).padEnd(8)} | ${String(contractStatus).padEnd(11)} | ${String(partitionKeys.length).padEnd(15)} | ${String(group.entities.length).padEnd(12)} | ${String(subDomainCounts.Contract).padEnd(8)} | ${String(subDomainCounts.ContractLine).padEnd(12)} | ${String(subDomainCounts.ContractCustomer).padEnd(16)} |`);
+                console.log(`| ${String(contractId).padEnd(12)} | ${String(group.country).padEnd(8)} | ${String(contractStatus).padEnd(11)} | ${String(integrationStatus).padEnd(26)} | ${String(partitionKeys.length).padEnd(15)} | ${String(group.entities.length).padEnd(12)} | ${String(subDomainCounts.Contract).padEnd(8)} | ${String(subDomainCounts.ContractLine).padEnd(12)} | ${String(subDomainCounts.ContractCustomer).padEnd(16)} |`);
+                
+                // Show integration comment if there are errors
+                if (integrationInfo.integrationComment && integrationStatus === 'Completed With Errors') {
+                    console.log(`  ⚠️  Integration Error: ${integrationInfo.integrationComment}`);
+                }
             }
-            console.log(`${'-'.repeat(120)}`);
+            console.log(`${'-'.repeat(180)}`);
 
             // Detailed breakdown
             console.log(`\n📊 DETAILED BREAKDOWN:`);
@@ -150,6 +188,30 @@ export async function run(containers, options = {}) {
             console.log(`${'-'.repeat(60)}`);
             console.log(`Total Contract Groups: ${contractGroups.size}`);
             console.log(`Total Results: ${processedEntities.length}`);
+            
+            // Integration Status Summary
+            const integrationStatusCounts = {
+                'Completed': 0,
+                'Completed With Errors': 0,
+                'Loading': 0,
+                'Unknown': 0
+            };
+            
+            for (const [contractId, group] of contractGroups) {
+                const integrationInfo = integrationStatusMap.get(String(contractId)) || {};
+                const status = integrationInfo.integrationStatus || 'Unknown';
+                if (integrationStatusCounts.hasOwnProperty(status)) {
+                    integrationStatusCounts[status]++;
+                } else {
+                    integrationStatusCounts['Unknown']++;
+                }
+            }
+            
+            console.log(`\n📊 Integration Status Summary:`);
+            console.log(`   - Completed: ${integrationStatusCounts['Completed']}`);
+            console.log(`   - Completed With Errors: ${integrationStatusCounts['Completed With Errors']}`);
+            console.log(`   - Loading: ${integrationStatusCounts['Loading']}`);
+            console.log(`   - Unknown: ${integrationStatusCounts['Unknown']}`);
         } else {
             console.log("❌ No contracts found matching the search criteria");
         }

@@ -234,22 +234,20 @@ export const queries = [
                             errorCode,
                             errorMessage,
                             failureType,
-                            count: 0,
                             uniqueContracts: new Set(),
                         });
                     }
                     const data = failedRecordsGrouped.get(key);
-                    data.count++;
-                    data.uniqueContracts.add(record.id);
+                    data.uniqueContracts.add(record.contractId);
                 });
 
                 const metrics = [];
                 const windowLabel = win.label || "today";
 
                 failedRecordsGrouped.forEach((data) => {
-                    console.log(`📈 [CONTRACTFAILED-TODAY] ${data.entityType} | ${data.errorCode} | ${data.errorMessage} | Failure Type: ${data.failureType} | Count: ${data.count} | Unique Contracts: ${data.uniqueContracts.size}`);
+                    console.log(`📈 [CONTRACTFAILED-TODAY] ${data.entityType} | ${data.errorCode} | ${data.errorMessage} | Failure Type: ${data.failureType} | Unique Contracts: ${data.uniqueContracts.size}`);
                     metrics.push({
-                        value: data.count,
+                        value: data.uniqueContracts.size,
                         labels: {
                             entity_type: data.entityType,
                             error_code: data.errorCode,

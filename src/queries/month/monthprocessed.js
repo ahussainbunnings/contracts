@@ -139,6 +139,49 @@ export const queries = [
 
             console.log(`✅ [CONTRACTPROCESSED-MONTH] Found ${latestContractByContractId.size} unique contracts with their latest uploads`);
 
+            // Step 3.5: Query integration status for all unique contracts to exclude those with errors
+            const contractIds = Array.from(latestContractByContractId.keys());
+            const integrationStatusMap = new Map(); // contractId -> integrationStatus
+            
+            if (contractIds.length > 0) {
+                console.log(`🔍 [CONTRACTPROCESSED-MONTH] Checking integration status for ${contractIds.length} contracts...`);
+                
+                // Process in chunks to avoid query size limits
+                const chunkSize = 50;
+                for (let i = 0; i < contractIds.length; i += chunkSize) {
+                    const chunk = contractIds.slice(i, i + chunkSize);
+                    
+                    const parameters = [];
+                    const placeholders = [];
+                    for (let j = 0; j < chunk.length; j++) {
+                        placeholders.push(`@contractId${j}`);
+                        parameters.push({ name: `@contractId${j}`, value: chunk[j] });
+                    }
+                    
+                    const integrationQuery = {
+                        query: `
+                            SELECT c.contractId, c.integrationStatus
+                            FROM c
+                            WHERE c.documentType = "ContractCosmosDataModel"
+                              AND c.contractId IN (${placeholders.join(',')})
+                            ORDER BY c._ts DESC
+                        `,
+                        parameters: parameters
+                    };
+                    
+                    const { resources: integrationResults } = await statusC.items.query(integrationQuery).fetchAll();
+                    
+                    // Keep only the most recent integration status for each contract
+                    for (const result of (integrationResults || [])) {
+                        if (result.contractId && !integrationStatusMap.has(result.contractId)) {
+                            integrationStatusMap.set(result.contractId, result.integrationStatus || 'Unknown');
+                        }
+                    }
+                }
+                
+                console.log(`✅ [CONTRACTPROCESSED-MONTH] Found integration status for ${integrationStatusMap.size} contracts`);
+            }
+
             // Step 4: Process only the latest contracts and build aggregations
             const agg = new Map(); // key = `${status}|${country}|${cs}|${attempts}`
             const normCountry = (raw) => String(raw || "").toLowerCase().trim();
@@ -156,8 +199,18 @@ export const queries = [
                 const attempts = contractRow.attempts || 0;
                 const status = normalizeStatus(contractRow.status);
                 const batchId = contractRow.batchId;
+                
+                // Check integration status - exclude contracts with errors from "completed" count
+                const integrationStatus = integrationStatusMap.get(contractId) || 'Unknown';
+                const hasErrors = integrationStatus === 'Completed With Errors';
 
-                console.log(`📊 [CONTRACTPROCESSED-MONTH] Processing latest upload for contract ${contractId}: ${batchId} -> status=${status}, country=${country}, contractStatus=${cs}, attempts=${attempts}, timestamp=${contractRow.timestamp}`);
+                console.log(`📊 [CONTRACTPROCESSED-MONTH] Processing latest upload for contract ${contractId}: ${batchId} -> status=${status}, country=${country}, contractStatus=${cs}, attempts=${attempts}, timestamp=${contractRow.timestamp}, integrationStatus=${integrationStatus}`);
+
+                // Skip contracts with "Completed With Errors" - they should only be counted in integration status metrics
+                if (status === 'completed' && hasErrors) {
+                    console.log(`⚠️ [CONTRACTPROCESSED-MONTH] Skipping contract ${contractId} - has integration errors (will be counted in integration status metrics only)`);
+                    continue;
+                }
 
                 // Contract header exists and upload document exists - count this unique processed contract
                 const k = `${status}|${country}|${cs}|0`;
